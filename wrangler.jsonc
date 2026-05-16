@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nomenclature",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-16",
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "blabout.com",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

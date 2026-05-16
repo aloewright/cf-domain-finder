@@ -1,0 +1,22 @@
+{
+  "name": "nomenclature",
+  "version": "0.1.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "private": "true",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260514.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.50.0"
+  }
+}
