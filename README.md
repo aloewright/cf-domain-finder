@@ -14,3 +14,25 @@ npm ci
 npm run check
 npm run deploy
 ```
+
+## Secrets Management
+
+This project uses [Doppler](https://doppler.com) for secret management.
+
+To set up Doppler for development:
+
+```bash
+doppler setup
+```
+
+To run with secrets:
+
+```bash
+doppler run -- npm run dev
+```
+
+To deploy with secrets:
+
+```bash
+doppler run -- npm run deploy
+```

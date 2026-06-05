@@ -1,0 +1,3 @@
+setup:
+  project: quickapp
+  config: dev
