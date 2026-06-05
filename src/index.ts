@@ -1,11 +1,14 @@
 interface Env {
   BRAVE_API_KEY?: string;
   AI: any;
-  // Cloudflare Registrar API (beta): account id + a token with Registrar permissions.
-  // Used to confirm .com availability and current pricing. Optional — when unset, the
-  // app degrades gracefully (availability shown as "unknown", generic purchase link).
+  // Cloudflare Registrar API (beta): confirm .com availability + current pricing.
+  // Authenticated with the account Global API Key (X-Auth-Email + X-Auth-Key) at the
+  // account owner's explicit direction — the scoped API token lacks the Registrar
+  // permission, while the Global API Key has account-wide access. All optional: when
+  // unset the app degrades gracefully (availability shown as "unknown").
   CLOUDFLARE_ACCOUNT_ID?: string;
-  CLOUDFLARE_API_TOKEN?: string;
+  CLOUDFLARE_EMAIL?: string;
+  CLOUDFLARE_API_KEY?: string;
 }
 
 type AppHit = {
@@ -557,7 +560,10 @@ async function checkDomains(names: string[], env: Env): Promise<Map<string, Doma
     out.set(domain, unknownDomain(domain));
   }
 
-  if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_API_TOKEN || domains.length === 0) {
+  const accountId = env.CLOUDFLARE_ACCOUNT_ID;
+  const email = env.CLOUDFLARE_EMAIL;
+  const apiKey = env.CLOUDFLARE_API_KEY;
+  if (!accountId || !email || !apiKey || domains.length === 0) {
     return out;
   }
 
@@ -565,11 +571,12 @@ async function checkDomains(names: string[], env: Env): Promise<Map<string, Doma
     chunk(domains, 20).map(async (batch) => {
       try {
         const response = await fetch(
-          `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/registrar/domain-check`,
+          `https://api.cloudflare.com/client/v4/accounts/${accountId}/registrar/domain-check`,
           {
             method: "POST",
             headers: {
-              authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`,
+              "x-auth-email": email,
+              "x-auth-key": apiKey,
               "content-type": "application/json"
             },
             body: JSON.stringify({ domains: batch }),
