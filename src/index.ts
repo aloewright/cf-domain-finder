@@ -1,6 +1,13 @@
+import { createAiGateway } from "ai-gateway-provider";
+import { createUnified } from "ai-gateway-provider/providers/unified";
+import { generateText } from "ai";
+
 interface Env {
   BRAVE_API_KEY?: string;
   AI: any;
+  // AI Gateway token (cf-aig-authorization) used by ai-gateway-provider to call the
+  // "dynamic/fast" dynamic route. Synced from Doppler.
+  CF_AIG_TOKEN?: string;
   // Cloudflare Registrar API (beta): confirm .com availability + current pricing.
   // Authenticated with the account Global API Key (X-Auth-Email + X-Auth-Key) at the
   // account owner's explicit direction — the scoped API token lacks the Registrar
@@ -464,33 +471,25 @@ Return a JSON object with:
 - relatedMeanings: 3-5 thesaurus-style words.`;
 
   try {
-    // Route through the AI Gateway dynamic route "dynamic/fast". Per Cloudflare's
-    // Dynamic Routing docs, a dynamic route is invoked from a Worker via the gateway
-    // binding's compat provider (env.AI.run("dynamic/...") does NOT resolve dynamic
-    // routes — it treats the slug as a literal model id). The compat/chat-completions
-    // response is OpenAI-shaped (choices[].message.content).
-    // https://developers.cloudflare.com/ai-gateway/features/dynamic-routing/usage/
-    const aiCall = env.AI.gateway("x").run({
-      provider: "compat",
-      endpoint: "chat/completions",
-      headers: {},
-      query: {
-        model: "dynamic/fast",
-        messages: [
-          { role: "system", content: "You are a naming expert. Return only JSON." },
-          { role: "user", content: prompt }
-        ],
-        max_tokens: 800
-      }
-    }) as Promise<{ response?: string; choices?: Array<{ message?: { content?: string } }> }>;
+    // Call the AI Gateway dynamic route "dynamic/fast" through the ai-gateway-provider
+    // unified provider + Vercel AI SDK. This is the invocation that actually resolves a
+    // dynamic route from a Worker — the env.AI.gateway().run() compat path returned an
+    // empty body. Auth is the gateway token CF_AIG_TOKEN (cf-aig-authorization).
+    const aigateway = createAiGateway({
+      accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "",
+      gateway: "x",
+      apiKey: env.CF_AIG_TOKEN ?? ""
+    });
+    const unified = createUnified();
 
-    // Hard timeout so a slow or hung gateway call can never stall the request.
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("AI grounding timed out")), 8000)
-    );
-    const result = await Promise.race([aiCall, timeout]);
+    // abortSignal bounds the call so a slow/hung route can't stall the request.
+    const { text } = await generateText({
+      model: aigateway(unified("dynamic/fast")),
+      system: "You are a naming expert. Return only JSON.",
+      prompt,
+      abortSignal: AbortSignal.timeout(10000)
+    });
 
-    const text = result.response ?? result.choices?.[0]?.message?.content ?? "";
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
     const parsed = JSON.parse(start >= 0 && end >= start ? text.slice(start, end + 1) : text);
