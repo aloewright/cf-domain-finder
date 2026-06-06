@@ -15,5 +15,12 @@
   },
   "ai": {
     "binding": "AI"
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nomenclature-db",
+      "database_id": "2ea7e5fd-57f3-464b-ac72-fa4e4f8394b9"
+    }
+  ]
 }
