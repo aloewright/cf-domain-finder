@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" font-family="'Nunito','Trebuchet MS',-apple-system,'Segoe UI',Roboto,sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d0e10"/>
+      <stop offset="0.52" stop-color="#16171b"/>
+      <stop offset="1" stop-color="#0d0e10"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="0.08" cy="0.18" r="0.5">
+      <stop offset="0" stop-color="#8be8ee" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#8be8ee" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="0.92" cy="0.88" r="0.5">
+      <stop offset="0" stop-color="#bda7ff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#bda7ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="title" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f4f1ec" stop-opacity="0.62"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="400" rx="0" fill="url(#bg)"/>
+  <rect width="1200" height="400" fill="url(#glowA)"/>
+  <rect width="1200" height="400" fill="url(#glowB)"/>
+
+  <!-- Left column -->
+  <g transform="translate(72,108)">
+    <!-- pills -->
+    <g font-size="13" font-weight="800" letter-spacing="0.8" fill="#8be8ee">
+      <rect x="0" y="0" width="66" height="30" rx="15" fill="#8be8ee" fill-opacity="0.14" stroke="#8be8ee" stroke-opacity="0.4"/>
+      <text x="33" y="20" text-anchor="middle">FREE</text>
+      <rect x="76" y="0" width="138" height="30" rx="15" fill="#8be8ee" fill-opacity="0.14" stroke="#8be8ee" stroke-opacity="0.4"/>
+      <text x="145" y="20" text-anchor="middle">OPEN SOURCE</text>
+      <rect x="224" y="0" width="116" height="30" rx="15" fill="#8be8ee" fill-opacity="0.14" stroke="#8be8ee" stroke-opacity="0.4"/>
+      <text x="282" y="20" text-anchor="middle">NO MARKUP</text>
+    </g>
+
+    <!-- title -->
+    <text x="0" y="98" font-size="60" font-weight="900" letter-spacing="-1.6" fill="url(#title)">Cloudflare</text>
+    <text x="0" y="158" font-size="60" font-weight="900" letter-spacing="-1.6" fill="url(#title)">Domain Finder</text>
+
+    <!-- tagline -->
+    <text x="0" y="208" font-size="20" font-weight="500" fill="#f4f1ec" fill-opacity="0.66">Generate brandable name ideas, check live availability and</text>
+    <text x="0" y="236" font-size="20" font-weight="500" fill="#f4f1ec" fill-opacity="0.66">pricing on Cloudflare at cost, and save your favorites.</text>
+
+    <!-- url -->
+    <circle cx="6" cy="272" r="5" fill="#8ef0b4"/>
+    <text x="20" y="278" font-size="16" font-weight="800" fill="#8be8ee">blabout.com</text>
+  </g>
+
+  <!-- Card -->
+  <g transform="translate(792,86) rotate(-2)">
+    <rect x="0" y="0" width="350" height="228" rx="24" fill="#1f2023" fill-opacity="0.72" stroke="#ffffff" stroke-opacity="0.1"/>
+    <text x="26" y="52" font-size="27" font-weight="900" letter-spacing="-0.3" fill="#f4f1ec">Harborquay</text>
+
+    <!-- score ring -->
+    <g transform="translate(296,26)">
+      <circle cx="28" cy="28" r="24" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="5"/>
+      <circle cx="28" cy="28" r="24" fill="none" stroke="#8be8ee" stroke-width="5" stroke-linecap="round"
+              stroke-dasharray="150.8" stroke-dashoffset="33" transform="rotate(-90 28 28)"/>
+      <text x="28" y="33" text-anchor="middle" font-size="16" font-weight="900" fill="#f4f1ec">78</text>
+    </g>
+
+    <text x="26" y="78" font-size="13" font-weight="500" fill="#f4f1ec" fill-opacity="0.6">Harborquay — Private AI</text>
+
+    <!-- domain row -->
+    <rect x="26" y="98" width="298" height="48" rx="14" fill="#8ef0b4" fill-opacity="0.1"/>
+    <text x="42" y="127" font-size="15" font-weight="800" fill="#f4f1ec">harborquay.com</text>
+    <text x="210" y="127" font-size="15" font-weight="900" fill="#8ef0b4">$10.46/yr</text>
+    <rect x="266" y="110" width="46" height="24" rx="12" fill="#8ef0b4"/>
+    <text x="289" y="127" text-anchor="middle" font-size="12" font-weight="900" fill="#07210f">Buy</text>
+
+    <!-- foot -->
+    <line x1="26" y1="170" x2="324" y2="170" stroke="#ffffff" stroke-opacity="0.08"/>
+    <text x="26" y="196" font-size="13" font-weight="500" fill="#f4f1ec" fill-opacity="0.6">App Store: <tspan font-weight="800" fill="#f4f1ec">12</tspan> results</text>
+  </g>
+</svg>
