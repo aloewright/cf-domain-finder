@@ -74,8 +74,7 @@ export const INDEX_HTML = `<!doctype html>
     .saved-btn:hover { background: rgba(255,255,255,0.08); }
     .saved-btn i { width: 16px; height: 16px; }
     .saved-btn span { background: var(--accent-soft); color: var(--accent); border-radius: var(--r-pill); padding: 1px 8px; font-size: 12px; }
-    .user-pill { color: var(--muted); font-weight: 700; font-size: 14px; }
-    .ghost-btn { background: none; border: none; color: var(--muted); font-weight: 700; font-size: 14px; cursor: pointer; padding: 9px 8px; }
+    .ghost-btn { background: none; border: none; color: var(--muted); font-weight: 700; font-size: 14px; cursor: pointer; padding: 9px 8px; display: inline-flex; align-items: center; }
     .ghost-btn:hover { color: var(--text); }
 
     .wizard-step { display: none; max-width: 760px; margin: 0 auto; width: 100%; animation: fadeIn 0.4s ease-out; }
@@ -177,9 +176,9 @@ export const INDEX_HTML = `<!doctype html>
     .dom-buy i { width: 13px; height: 13px; }
     .bm { background: none; border: none; cursor: pointer; color: var(--muted); padding: 2px; display: inline-flex; align-items: center; transition: color 0.15s ease, transform 0.15s ease; flex: 0 0 auto; }
     .bm:hover { color: var(--text); transform: scale(1.1); }
-    .bm i { width: 17px; height: 17px; }
+    .bm i, .bm svg { width: 17px; height: 17px; }
     .bm.on { color: var(--accent); }
-    .bm.on i { fill: var(--accent); }
+    .bm.on i, .bm.on svg { fill: var(--accent); }
 
     .card-foot { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; margin-top: 2px; }
     .card-foot i { width: 15px; height: 15px; }
@@ -188,6 +187,10 @@ export const INDEX_HTML = `<!doctype html>
     .scroll-status { text-align: center; color: var(--muted); padding: 32px 0 8px; font-weight: 600; grid-column: 1 / -1; }
     .spinner { width: 22px; height: 22px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: var(--r-pill); display: inline-block; animation: spin 0.8s linear infinite; vertical-align: middle; }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    .site-footer { margin-top: auto; padding-top: 56px; text-align: center; color: var(--muted); font-size: 13px; font-weight: 600; }
+    .site-footer a { color: var(--muted); text-decoration: none; }
+    .site-footer a:hover { color: var(--accent); }
 
     /* Overlays: auth + saved */
     .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.78); backdrop-filter: blur(8px); z-index: 1000; display: none; place-items: center; padding: 24px; }
@@ -309,6 +312,7 @@ export const INDEX_HTML = `<!doctype html>
             </div>
           </div>
           <div class="filter-block"><button class="primary" style="width: 100%; justify-content: center;" onclick="generateNames()">Regenerate</button></div>
+          <div class="filter-block"><button class="secondary" style="width: 100%; justify-content: center;" onclick="nextStep(1)">Start over <i data-lucide="rotate-ccw"></i></button></div>
         </div>
       </aside>
       <main>
@@ -318,6 +322,7 @@ export const INDEX_HTML = `<!doctype html>
         <div id="scroll-sentinel" style="height: 1px;"></div>
       </main>
     </div>
+    <footer class="site-footer">&copy; 2026 <a href="https://pdx.software" target="_blank" rel="noreferrer">Harborline</a></footer>
   </div>
 
   <!-- Auth overlay -->
@@ -378,8 +383,7 @@ export const INDEX_HTML = `<!doctype html>
       var el = document.getElementById('header-actions');
       if (currentUser) {
         el.innerHTML = '<button class="saved-btn" onclick="showSaved()"><i data-lucide="bookmark"></i> Saved <span id="saved-count">0</span></button>' +
-          '<span class="user-pill">' + esc(currentUser.name) + '</span>' +
-          '<button class="ghost-btn" onclick="logout()">Log out</button>';
+          '<button class="ghost-btn" onclick="logout()" title="Log out" aria-label="Log out"><i data-lucide="log-out"></i></button>';
         updateSavedCount();
       } else { el.innerHTML = ''; }
       lucide.createIcons();
@@ -499,6 +503,7 @@ export const INDEX_HTML = `<!doctype html>
       if (seeds.length < 2) { box.innerHTML = ''; return; }
       if (seedAbort) seedAbort.abort();
       seedAbort = new AbortController();
+      box.innerHTML = '<span class="suggest-label"><span class="spinner" style="width:13px;height:13px;border-width:2px;"></span> Finding associations…</span>';
       try {
         var res = await fetch('/api/associate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seeds: seeds }), signal: seedAbort.signal });
         var data = await res.json();
@@ -507,7 +512,10 @@ export const INDEX_HTML = `<!doctype html>
           ? ('<span class="suggest-label"><i data-lucide="sparkles"></i> Suggested</span>' + words.map(function(w){ return '<span class="chip ai" onclick="addChip(\\'seeds\\', \\'' + w + '\\')">' + w + '</span>'; }).join(''))
           : '';
         lucide.createIcons();
-      } catch (e) { /* aborted or error */ }
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        box.innerHTML = '';
+      }
     }
 
     // ---------- wizard ----------
@@ -619,7 +627,8 @@ export const INDEX_HTML = `<!doctype html>
       status.innerHTML = '<span class="spinner"></span>';
       try {
         var p = state.params || getParams();
-        var res = await fetch('/api/suggest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ brief: p.brief, industry: p.industry, avoid: p.avoid, seeds: p.seeds, tlds: p.tlds, count: state.count, offset: state.offset }) });
+        var seenNames = allResults.map(function(r){ return r.name; }).slice(-120);
+        var res = await fetch('/api/suggest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ brief: p.brief, industry: p.industry, avoid: p.avoid, seeds: p.seeds, tlds: p.tlds, count: state.count, offset: state.offset, exclude: seenNames }) });
         if (res.status === 401) { state.active = false; status.textContent = ''; showAuth(function(){ generateNames(); }); return; }
         var data = await res.json();
         var fresh = data.results || [];

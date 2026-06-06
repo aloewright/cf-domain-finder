@@ -248,20 +248,28 @@ function cardScore(name: string, appStoreCount: number, domains: DomainInfo[], c
 // Shared gateway-route text call via ai-gateway-provider (the path that resolves dynamic
 // routes from a Worker; env.AI.gateway().run() returns an empty body). Auth is CF_AIG_TOKEN.
 // Uses dynamic/text_gen — dynamic/fast currently maps to a reasoning model that 504s.
-async function gatewayText(env: Env, system: string, prompt: string, timeoutMs = 12000): Promise<string> {
+async function gatewayText(
+  env: Env,
+  system: string,
+  prompt: string,
+  opts: { timeoutMs?: number; maxOutputTokens?: number } = {}
+): Promise<string> {
   const aigateway = createAiGateway({
     accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "",
     gateway: "x",
     apiKey: env.CF_AIG_TOKEN ?? ""
   });
   const unified = createUnified();
-  const { text } = await generateText({
+  const { text, reasoningText } = await generateText({
     model: aigateway(unified("dynamic/text_gen")),
     system,
     prompt,
-    abortSignal: AbortSignal.timeout(timeoutMs)
+    maxOutputTokens: opts.maxOutputTokens,
+    abortSignal: AbortSignal.timeout(opts.timeoutMs ?? 12000)
   });
-  return text;
+  // dynamic/text_gen sometimes routes to a reasoning model that puts its output in the
+  // reasoning channel and leaves content empty — fall back to that so we still get words.
+  return text && text.trim() ? text : reasoningText ?? "";
 }
 
 async function groundName(name: string, web: CandidateResult["web"], context: NamingContext, env: Env): Promise<GroundingData> {
@@ -401,22 +409,109 @@ function fontResponse() {
   });
 }
 
-// Gate: results require an authenticated user.
+// Reasoning-prose / naming-task words to drop when the model's output arrives as reasoning
+// text (so connectors and instruction words don't get mistaken for candidate names).
+const NAMER_STOP = new Set([
+  "the", "and", "for", "you", "are", "with", "that", "this", "into", "from", "your", "they", "them",
+  "these", "those", "than", "name", "names", "word", "words", "token", "tokens", "letter", "letters",
+  "space", "spaces", "each", "one", "only", "none", "give", "list", "output", "return", "separated",
+  "nothing", "else", "easy", "say", "distinct", "vary", "varied", "style", "styles", "invented",
+  "blend", "blends", "evocative", "real", "coinage", "coinages", "playful", "memorable", "brandable",
+  "unique", "product", "products", "brief", "industry", "theme", "themes", "thematic", "inspiration",
+  "avoid", "group", "groups", "maybe", "like", "such", "etc", "more", "also", "very", "apps", "idea",
+  "ideas", "based", "could", "would", "should", "must", "make", "makes", "good", "great", "here",
+  "some", "many", "most", "using", "used", "clearly", "others", "twelve", "first", "second",
+  "diverse", "expert", "startup", "namer", "produces", "punctuation", "other", "varying", "widely",
+  "descriptor", "syllable", "syllables", "sound", "sounds", "vowel", "consonant", "example",
+  "examples", "candidate", "candidates", "option", "options", "final", "answer", "concept",
+  "concepts", "evoke", "modern", "sleek", "simple", "strong", "generate", "create", "suggest",
+  "following", "request", "restate", "conveys", "convey", "feels", "feel", "memorable",
+  "wide", "variety", "format", "formats", "length", "lengths", "suffix", "suffixes", "prefix",
+  "prefixes", "vibe", "vibes", "flavor", "tone", "fairly", "rather", "quite", "still", "while",
+  "okay", "maybe", "perhaps", "really", "actual", "actually", "around", "about", "above"
+]);
+
+// AI-generated, diverse, brandable names via dynamic/text_gen. The `exclude` list (names
+// already shown) keeps infinite scroll surfacing fresh, varied results instead of repeats.
+// Returns [] on failure so the caller can fall back to the deterministic generator.
+async function generateAiNames(
+  context: NamingContext,
+  seedsInput: unknown,
+  exclude: string[],
+  count: number,
+  env: Env
+): Promise<string[]> {
+  const seeds = parseWords(seedsInput);
+  const avoid = context.avoid;
+  const lines = [
+    `Generate ${count + 8} unique, brandable product names.`,
+    context.brief ? `Brief: ${context.brief}` : "",
+    context.industry ? `Industry: ${context.industry}` : "",
+    seeds.length
+      ? `Thematic inspiration (use as loose themes; do NOT just append fixed suffixes to these words): ${seeds.join(", ")}`
+      : "",
+    avoid.length ? `Avoid these themes/words entirely: ${avoid.join(", ")}` : "",
+    exclude.length ? `Do NOT repeat any of these already-shown names: ${exclude.slice(-120).join(", ")}` : "",
+    "",
+    "Each name is ONE token, 4-14 letters, no spaces or punctuation, easy to say, and clearly distinct from the others. Vary the styles widely: invented words, blends, evocative real words, playful coinages. Return ONLY the names separated by spaces, nothing else."
+  ].filter(Boolean);
+
+  try {
+    const text = await gatewayText(
+      env,
+      "You are an expert startup and product namer who produces diverse, memorable, brandable names.",
+      lines.join("\n"),
+      { timeoutMs: 13000, maxOutputTokens: 400 }
+    );
+    const seen = new Set(exclude.map((n) => n.toLowerCase()));
+    const avoidTerms = avoid.map(normalize);
+    // Words that merely echo the prompt (brief/industry/seeds) or are reasoning prose are
+    // not names — the model's output may arrive as its reasoning text.
+    const blocked = new Set<string>([
+      ...NAMER_STOP,
+      // Block every word that appears in the prompt itself (brief, industry, seeds, avoid,
+      // exclude, and the instructions) so the model's reasoning echoes don't leak as names.
+      ...parseWords(lines.join(" "))
+    ]);
+    return unique(text.split(/[^a-zA-Z]+/).map(brandCase).filter(Boolean))
+      .filter((n) => n.length >= 4 && n.length <= 16)
+      .filter((n) => !blocked.has(n.toLowerCase()))
+      .filter((n) => !avoidTerms.some((t) => t && normalize(n).includes(t)))
+      .filter((n) => !seen.has(n.toLowerCase()))
+      .slice(0, count);
+  } catch {
+    return [];
+  }
+}
+
+// Gate: results require an authenticated user. Names come from AI (diverse) and are then
+// confirmed against the Registrar API; the deterministic generator is the offline fallback.
 async function handleSuggest(request: Request, env: Env) {
   const userId = await requireUser(request, env);
   if (!userId) return json({ error: "Authentication required" }, { status: 401 });
 
   const body = (await request.json().catch(() => ({}))) as {
     brief?: string; industry?: string; audience?: string; keywords?: string;
-    aiKeywords?: string; avoid?: string; seeds?: string; count?: number; offset?: number; tlds?: unknown;
+    aiKeywords?: string; avoid?: string; seeds?: string; count?: number; offset?: number;
+    tlds?: unknown; exclude?: unknown;
   };
 
   const context = buildContext(body);
-  const candidates = generateCandidates(context, body.seeds);
   const count = clampInt(body.count, 4, 24, 12);
   const offset = clampInt(body.offset, 0, 100000, 0);
   const tlds = parseTlds(body.tlds);
-  const page = candidates.slice(offset, offset + count);
+  const exclude = Array.isArray(body.exclude)
+    ? body.exclude.map((n) => String(n)).filter(Boolean).slice(0, 120)
+    : [];
+
+  // Primary: AI-generated diverse names. Fallback: deterministic combos (exclude-aware).
+  let page = await generateAiNames(context, body.seeds, exclude, count, env);
+  if (page.length === 0) {
+    const seen = new Set(exclude.map((n) => n.toLowerCase()));
+    page = generateCandidates(context, body.seeds)
+      .filter((n) => !seen.has(n.toLowerCase()))
+      .slice(0, count);
+  }
 
   const [appStores, domainMap] = await Promise.all([
     Promise.all(page.map((name) => checkAppStore(name))),
@@ -426,12 +521,22 @@ async function handleSuggest(request: Request, env: Env) {
   const results = page.map((name, index) => {
     const appStoreCount = appStores[index].resultCount;
     const domains = domainMap.get(name.toLowerCase()) ?? [];
-    return { name, displayName: `${name} — Private AI`, score: cardScore(name, appStoreCount, domains, context), appStoreCount, domains };
+    return {
+      name,
+      displayName: `${name} — Private AI`,
+      score: cardScore(name, appStoreCount, domains, context),
+      appStoreCount,
+      domains
+    };
   });
 
   return json({
-    results, offset, nextOffset: offset + count,
-    hasMore: offset + count < candidates.length, total: candidates.length, tlds, aiKeywords: context.aiKeywords
+    results,
+    offset,
+    nextOffset: offset + count,
+    hasMore: results.length > 0,
+    tlds,
+    aiKeywords: context.aiKeywords
   });
 }
 
@@ -453,8 +558,8 @@ async function handleAssociate(request: Request, env: Env) {
     const text = await gatewayText(
       env,
       "You suggest short, brandable seed words for product naming.",
-      `Seed words so far: ${seeds}\nSuggest 12 short single words (2 to 4 letters, lowercase) thematically associated with these seeds for a brandable tech product name. Reply with ONLY the words separated by spaces, nothing else.`,
-      13000
+      `Seed words so far: ${seeds}\nReply with ONLY 18 very short words (each 2 to 4 letters, lowercase, single words) related to these seeds for a brandable tech product name, separated by spaces. No numbers, no punctuation, no other text. Example style: bay hub arc ray node sync moor cove.`,
+      { timeoutMs: 12000, maxOutputTokens: 160 }
     );
 
     let candidates: string[] = [];
