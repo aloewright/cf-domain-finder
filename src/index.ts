@@ -1,6 +1,3 @@
-import { createAiGateway } from "ai-gateway-provider";
-import { createUnified } from "ai-gateway-provider/providers/unified";
-import { generateText } from "ai";
 import { NUNITO_WOFF2_BASE64 } from "./nunito";
 import { INDEX_HTML } from "./html";
 import { Env, json } from "./shared";
@@ -245,31 +242,33 @@ function cardScore(name: string, appStoreCount: number, domains: DomainInfo[], c
   return Math.max(2, Math.min(100, Math.round(score)));
 }
 
-// Shared gateway-route text call via ai-gateway-provider (the path that resolves dynamic
-// routes from a Worker; env.AI.gateway().run() returns an empty body). Auth is CF_AIG_TOKEN.
-// Uses dynamic/text_gen — dynamic/fast currently maps to a reasoning model that 504s.
+// Call the fast, non-reasoning Llama model directly through gateway "x" (for caching +
+// observability). Per ~/.claude/CLAUDE.md "Inside a Worker", env.AI.run with a concrete
+// @cf/ model id is the working Worker-side invocation. We use it explicitly instead of the
+// dynamic/* routes, which load-balanced to slow reasoning models (no streamable content,
+// ~6s+ latency). Llama returns clean content in ~1-2s. Model id current per CLAUDE.md.
 async function gatewayText(
   env: Env,
   system: string,
   prompt: string,
   opts: { timeoutMs?: number; maxOutputTokens?: number } = {}
 ): Promise<string> {
-  const aigateway = createAiGateway({
-    accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "",
-    gateway: "x",
-    apiKey: env.CF_AIG_TOKEN ?? ""
-  });
-  const unified = createUnified();
-  const { text, reasoningText } = await generateText({
-    model: aigateway(unified("dynamic/text_gen")),
-    system,
-    prompt,
-    maxOutputTokens: opts.maxOutputTokens,
-    abortSignal: AbortSignal.timeout(opts.timeoutMs ?? 12000)
-  });
-  // dynamic/text_gen sometimes routes to a reasoning model that puts its output in the
-  // reasoning channel and leaves content empty — fall back to that so we still get words.
-  return text && text.trim() ? text : reasoningText ?? "";
+  const call = env.AI.run(
+    "@cf/meta/llama-3.1-8b-instruct-fp8",
+    {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: prompt }
+      ],
+      max_tokens: opts.maxOutputTokens ?? 256
+    },
+    { gateway: { id: "x" } }
+  ) as Promise<{ response?: string }>;
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("AI timed out")), opts.timeoutMs ?? 12000)
+  );
+  const result = await Promise.race([call, timeout]);
+  return result.response ?? "";
 }
 
 async function groundName(name: string, web: CandidateResult["web"], context: NamingContext, env: Env): Promise<GroundingData> {
