@@ -361,7 +361,10 @@ export const INDEX_HTML = `<!doctype html>
     var TLDS = ['com','ai','io','dev','app','co','net','org','xyz','me','tech','store','online','site','pro','info','biz','design','studio','cloud','sh','gg','live','link'];
     var selectedTlds = { com: true };
     var allResults = [];
-    var state = { offset: 0, count: 12, hasMore: true, loading: false, active: false, params: null, maxLen: 99 };
+    var state = { count: 12, poolCount: 30, hasMore: true, loading: false, active: false, params: null, maxLen: 99 };
+    var namePool = [];
+    var poolExhausted = false;
+    var refilling = false;
     var currentUser = null;
     var bookmarkedDomains = new Set();
     var savedItems = [];
@@ -606,39 +609,71 @@ export const INDEX_HTML = `<!doctype html>
       return { brief: document.getElementById('brief').value, industry: document.getElementById('industry').value, avoid: document.getElementById('avoid').value, seeds: document.getElementById('seeds').value, tlds: getSelectedTlds() };
     }
 
+    // One slow AI call fills a pool of names the client paginates through.
+    async function refillPool() {
+      if (refilling || poolExhausted) return;
+      refilling = true;
+      try {
+        var p = state.params || getParams();
+        var seen = {};
+        allResults.forEach(function(r){ seen[r.name.toLowerCase()] = 1; });
+        namePool.forEach(function(n){ seen[n.toLowerCase()] = 1; });
+        var exclude = allResults.map(function(r){ return r.name; }).concat(namePool).slice(-150);
+        var res = await fetch('/api/names', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ brief: p.brief, industry: p.industry, avoid: p.avoid, seeds: p.seeds, exclude: exclude, count: state.poolCount }) });
+        if (res.status === 401) { state.active = false; poolExhausted = true; showAuth(function(){ generateNames(); }); return; }
+        var data = await res.json();
+        var fresh = (data.names || []).filter(function(n){ return !seen[String(n).toLowerCase()]; });
+        namePool = namePool.concat(fresh);
+        if (fresh.length === 0) poolExhausted = true;
+      } catch (e) {
+        poolExhausted = true;
+      } finally {
+        refilling = false;
+      }
+    }
+
     async function generateNames() {
       if (!currentUser) { showAuth(function(){ generateNames(); }); return; }
       var btn = document.getElementById('generate-btn');
       if (btn) { btn.disabled = true; btn.innerHTML = 'Generating... <i data-lucide="loader-2"></i>'; lucide.createIcons(); }
       document.querySelectorAll('.wizard-step').forEach(function(s){ s.classList.remove('active'); });
       document.getElementById('dashboard').classList.add('active');
-      allResults = [];
+      allResults = []; namePool = []; poolExhausted = false; refilling = false;
       document.getElementById('results-grid').innerHTML = '';
-      state.offset = 0; state.hasMore = true; state.loading = false; state.active = true; state.params = getParams();
+      state.hasMore = true; state.loading = false; state.active = true; state.params = getParams();
       onLengthChange();
+      document.getElementById('scroll-status').innerHTML = '<span class="spinner"></span> Generating names…';
+      await refillPool();
       await loadMore();
       if (btn) { btn.disabled = false; btn.innerHTML = 'Generate Names <i data-lucide="sparkles"></i>'; lucide.createIcons(); }
     }
 
+    // Each page only does the fast domain + App Store checks on names already in the pool.
     async function loadMore() {
       if (!state.active || state.loading || !state.hasMore) return;
       state.loading = true;
       var status = document.getElementById('scroll-status');
-      status.innerHTML = '<span class="spinner"></span>';
+      if (!(status.textContent || '').trim()) status.innerHTML = '<span class="spinner"></span>';
       try {
+        if (namePool.length < state.count && !poolExhausted) await refillPool();
+        var batch = namePool.splice(0, state.count);
+        if (batch.length === 0) {
+          state.hasMore = false;
+          status.textContent = "That's all for this brief — try Regenerate or new seeds.";
+          return;
+        }
         var p = state.params || getParams();
-        var seenNames = allResults.map(function(r){ return r.name; }).slice(-120);
-        var res = await fetch('/api/suggest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ brief: p.brief, industry: p.industry, avoid: p.avoid, seeds: p.seeds, tlds: p.tlds, count: state.count, offset: state.offset, exclude: seenNames }) });
+        var res = await fetch('/api/enrich', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ names: batch, tlds: p.tlds, brief: p.brief, avoid: p.avoid }) });
         if (res.status === 401) { state.active = false; status.textContent = ''; showAuth(function(){ generateNames(); }); return; }
         var data = await res.json();
-        var fresh = data.results || [];
-        allResults = allResults.concat(fresh);
-        var grid = document.getElementById('results-grid');
-        grid.insertAdjacentHTML('beforeend', fresh.filter(isVisible).map(cardHtml).join(''));
+        var enriched = data.results || [];
+        allResults = allResults.concat(enriched);
+        document.getElementById('results-grid').insertAdjacentHTML('beforeend', enriched.filter(isVisible).map(cardHtml).join(''));
         lucide.createIcons();
-        state.offset = data.nextOffset;
-        state.hasMore = !!data.hasMore;
-        status.textContent = state.hasMore ? '' : 'That\\'s every candidate for this brief.';
+        state.hasMore = !(poolExhausted && namePool.length === 0);
+        status.textContent = state.hasMore ? '' : "That's all for this brief — try Regenerate or new seeds.";
+        // Prefetch the next pool in the background so scrolling stays instant.
+        if (!poolExhausted && namePool.length < state.count) refillPool();
       } catch (e) {
         status.textContent = 'Could not load more names.';
       } finally {

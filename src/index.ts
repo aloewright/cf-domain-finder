@@ -540,6 +540,66 @@ async function handleSuggest(request: Request, env: Env) {
   });
 }
 
+// Lazy pipeline. /api/names runs the one slow AI call and returns a large POOL of names the
+// client paginates through; /api/enrich confirms domains + App Store for a small batch (fast,
+// no AI). Result: infinite scroll does no AI call per page, so it stays snappy.
+async function handleNames(request: Request, env: Env) {
+  const userId = await requireUser(request, env);
+  if (!userId) return json({ error: "Authentication required" }, { status: 401 });
+
+  const body = (await request.json().catch(() => ({}))) as {
+    brief?: string; industry?: string; audience?: string; keywords?: string;
+    aiKeywords?: string; avoid?: string; seeds?: string; count?: number; exclude?: unknown;
+  };
+  const context = buildContext(body);
+  const count = clampInt(body.count, 8, 40, 30);
+  const exclude = Array.isArray(body.exclude)
+    ? body.exclude.map((n) => String(n)).filter(Boolean).slice(0, 150)
+    : [];
+
+  let names = await generateAiNames(context, body.seeds, exclude, count, env);
+  if (names.length === 0) {
+    const seen = new Set(exclude.map((n) => n.toLowerCase()));
+    names = generateCandidates(context, body.seeds)
+      .filter((n) => !seen.has(n.toLowerCase()))
+      .slice(0, count);
+  }
+  return json({ names });
+}
+
+async function handleEnrich(request: Request, env: Env) {
+  const userId = await requireUser(request, env);
+  if (!userId) return json({ error: "Authentication required" }, { status: 401 });
+
+  const body = (await request.json().catch(() => ({}))) as {
+    names?: unknown; tlds?: unknown; brief?: string; industry?: string; avoid?: string;
+  };
+  const names = Array.isArray(body.names)
+    ? body.names.map((n) => String(n)).filter(Boolean).slice(0, 14)
+    : [];
+  if (names.length === 0) return json({ results: [] });
+
+  const context = buildContext(body);
+  const tlds = parseTlds(body.tlds);
+  const [appStores, domainMap] = await Promise.all([
+    Promise.all(names.map((name) => checkAppStore(name))),
+    checkDomains(names, tlds, env)
+  ]);
+
+  const results = names.map((name, index) => {
+    const appStoreCount = appStores[index].resultCount;
+    const domains = domainMap.get(name.toLowerCase()) ?? [];
+    return {
+      name,
+      displayName: `${name} — Private AI`,
+      score: cardScore(name, appStoreCount, domains, context),
+      appStoreCount,
+      domains
+    };
+  });
+  return json({ results });
+}
+
 const ASSOCIATE_STOP = new Set([
   "the", "and", "for", "you", "are", "with", "that", "this", "into", "from", "your", "word",
   "words", "here", "list", "name", "tech", "they", "them", "like", "such", "etc", "some", "more",
@@ -636,6 +696,8 @@ export default {
     if (m === "POST" && pathname === "/api/bookmarks") return handleAddBookmark(request, env);
     if (m === "DELETE" && pathname === "/api/bookmarks") return handleDeleteBookmark(request, env);
     if (m === "POST" && pathname === "/api/associate") return handleAssociate(request, env);
+    if (m === "POST" && pathname === "/api/names") return handleNames(request, env);
+    if (m === "POST" && pathname === "/api/enrich") return handleEnrich(request, env);
     if (m === "POST" && pathname === "/api/suggest") return handleSuggest(request, env);
     if (m === "POST" && pathname === "/api/ground") return handleGround(request, env);
     if (m === "GET" && pathname === "/api/check") return handleCheck(request, env);
