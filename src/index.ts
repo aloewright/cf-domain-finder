@@ -245,9 +245,10 @@ function cardScore(name: string, appStoreCount: number, domains: DomainInfo[], c
   return Math.max(2, Math.min(100, Math.round(score)));
 }
 
-// Shared dynamic/fast call via ai-gateway-provider (the path that resolves dynamic routes
-// from a Worker; env.AI.gateway().run() returns an empty body). Auth is CF_AIG_TOKEN.
-async function dynamicFastText(env: Env, system: string, prompt: string, timeoutMs = 10000): Promise<string> {
+// Shared gateway-route text call via ai-gateway-provider (the path that resolves dynamic
+// routes from a Worker; env.AI.gateway().run() returns an empty body). Auth is CF_AIG_TOKEN.
+// Uses dynamic/text_gen — dynamic/fast currently maps to a reasoning model that 504s.
+async function gatewayText(env: Env, system: string, prompt: string, timeoutMs = 12000): Promise<string> {
   const aigateway = createAiGateway({
     accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "",
     gateway: "x",
@@ -255,7 +256,7 @@ async function dynamicFastText(env: Env, system: string, prompt: string, timeout
   });
   const unified = createUnified();
   const { text } = await generateText({
-    model: aigateway(unified("dynamic/fast")),
+    model: aigateway(unified("dynamic/text_gen")),
     system,
     prompt,
     abortSignal: AbortSignal.timeout(timeoutMs)
@@ -284,7 +285,7 @@ Return a JSON object with:
 - marketFitScore: 0-100 based on alignment with the brief.
 - relatedMeanings: 3-5 thesaurus-style words.`;
   try {
-    const text = await dynamicFastText(env, "You are a naming expert. Return only JSON.", prompt);
+    const text = await gatewayText(env, "You are a naming expert. Return only JSON.", prompt);
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
     const parsed = JSON.parse(start >= 0 && end >= start ? text.slice(start, end + 1) : text);
@@ -434,28 +435,47 @@ async function handleSuggest(request: Request, env: Env) {
   });
 }
 
-// Live seed-word suggestions — short (<5 char) associated words via dynamic/fast.
-// Not auth-gated: runs in the wizard before the results gate.
+const ASSOCIATE_STOP = new Set([
+  "the", "and", "for", "you", "are", "with", "that", "this", "into", "from", "your", "word",
+  "words", "here", "list", "name", "tech", "they", "them", "like", "such", "etc", "some", "more",
+  "idea", "best", "good", "also", "each", "very", "just", "only", "can", "will", "new", "use",
+  "try", "via", "per", "out", "all", "any", "set", "get", "one", "two"
+]);
+
+// Live seed-word suggestions — short (<5 char) associated words via the gateway route.
+// Not auth-gated: runs in the wizard before the results gate. Accepts either a JSON array
+// or free-form/list text (models vary), tokenizing and filtering to short, fresh words.
 async function handleAssociate(request: Request, env: Env) {
   const body = (await request.json().catch(() => ({}))) as { seeds?: string };
   const seeds = (body.seeds ?? "").trim().slice(0, 200);
   if (!seeds) return json({ words: [] });
   try {
-    const text = await dynamicFastText(
+    const text = await gatewayText(
       env,
-      "You suggest short, brandable seed words for product naming. Return ONLY a JSON array of strings.",
-      `Seed words so far: ${seeds}\nSuggest 12 short single words (2 to 4 letters, lowercase, no spaces or punctuation) that are thematically associated with these seeds and would work in a brandable tech product name. Return ONLY a JSON array, e.g. ["port","dock","arc"].`,
-      9000
+      "You suggest short, brandable seed words for product naming.",
+      `Seed words so far: ${seeds}\nSuggest 12 short single words (2 to 4 letters, lowercase) thematically associated with these seeds for a brandable tech product name. Reply with ONLY the words separated by spaces, nothing else.`,
+      13000
     );
+
+    let candidates: string[] = [];
     const start = text.indexOf("[");
     const end = text.lastIndexOf("]");
-    const arr = JSON.parse(start >= 0 && end >= start ? text.slice(start, end + 1) : "[]");
+    if (start >= 0 && end > start) {
+      try {
+        const arr = JSON.parse(text.slice(start, end + 1));
+        if (Array.isArray(arr)) candidates = arr.map((w) => String(w));
+      } catch {
+        // fall through to tokenization
+      }
+    }
+    if (candidates.length === 0) candidates = text.split(/[^a-zA-Z]+/);
+
     const existing = new Set(parseWords(seeds));
     const words = unique(
-      (Array.isArray(arr) ? arr : [])
-        .map((w: unknown) => String(w).toLowerCase().replace(/[^a-z]/g, ""))
-        .filter((w: string) => w.length >= 2 && w.length <= 4)
-        .filter((w: string) => !existing.has(w))
+      candidates
+        .map((w) => w.toLowerCase().replace(/[^a-z]/g, ""))
+        .filter((w) => w.length >= 2 && w.length <= 4)
+        .filter((w) => !ASSOCIATE_STOP.has(w) && !existing.has(w))
     ).slice(0, 8);
     return json({ words });
   } catch {
