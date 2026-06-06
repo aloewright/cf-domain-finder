@@ -66,9 +66,9 @@
     <!-- domain row -->
     <rect x="26" y="98" width="298" height="48" rx="14" fill="#8ef0b4" fill-opacity="0.1"/>
     <text x="42" y="127" font-size="15" font-weight="800" fill="#f4f1ec">harborquay.com</text>
-    <text x="210" y="127" font-size="15" font-weight="900" fill="#8ef0b4">$10.46/yr</text>
-    <rect x="266" y="110" width="46" height="24" rx="12" fill="#8ef0b4"/>
-    <text x="289" y="127" text-anchor="middle" font-size="12" font-weight="900" fill="#07210f">Buy</text>
+    <text x="250" y="127" text-anchor="end" font-size="14" font-weight="900" fill="#8ef0b4">$10.46/yr</text>
+    <rect x="262" y="110" width="46" height="25" rx="12" fill="#8ef0b4"/>
+    <text x="285" y="127" text-anchor="middle" font-size="12" font-weight="900" fill="#07210f">Buy</text>
 
     <!-- foot -->
     <line x1="26" y1="170" x2="324" y2="170" stroke="#ffffff" stroke-opacity="0.08"/>
