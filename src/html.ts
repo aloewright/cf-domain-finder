@@ -3,7 +3,7 @@ export const INDEX_HTML = `<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Nomenclature</title>
+  <title>CTL</title>
   <script src="https://unpkg.com/lucide@latest"></script>
   <style>
     @font-face {
@@ -279,7 +279,7 @@ export const INDEX_HTML = `<!doctype html>
 <body>
   <div class="app-container">
     <header>
-      <div class="logo-group"><h1>Nomenclature</h1></div>
+      <div class="logo-group"><h1>CTL</h1></div>
       <div id="header-actions"></div>
     </header>
 
