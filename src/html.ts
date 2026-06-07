@@ -238,6 +238,16 @@ export const INDEX_HTML = `<!doctype html>
     .chat-b.user { align-self: flex-end; background: var(--accent-soft); border: 1px solid rgba(139,232,238,0.22); border-bottom-right-radius: 4px; }
     .chat-b.assistant { align-self: flex-start; background: rgba(31,32,35,0.95); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
     .chat-b.typing { color: var(--muted); font-style: italic; align-self: flex-start; background: rgba(31,32,35,0.6); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+    .chat-b.assistant strong { font-weight: 700; color: var(--text); }
+    .chat-b.assistant em { font-style: italic; }
+    .chat-b.assistant code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: var(--accent-soft); padding: 1px 5px; border-radius: 5px; }
+    .chat-b.assistant a { color: var(--accent); text-decoration: underline; }
+    .chat-typing { display: inline-flex; gap: 5px; align-items: center; height: 8px; }
+    .chat-typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); opacity: 0.4; animation: chatDot 1.2s infinite ease-in-out; }
+    .chat-typing span:nth-child(2) { animation-delay: 0.18s; }
+    .chat-typing span:nth-child(3) { animation-delay: 0.36s; }
+    @keyframes chatDot { 0%, 70%, 100% { transform: translateY(0); opacity: 0.3; } 35% { transform: translateY(-5px); opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .chat-typing span { animation: none; opacity: 0.6; } }
     #chat-foot { padding: 10px 12px; border-top: 1px solid var(--line); background: rgba(13,14,16,0.7); display: flex; gap: 8px; align-items: center; flex: 0 0 auto; }
     #chat-input { flex: 1; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 9px 15px; color: var(--text); font-size: 14px; font-weight: 500; min-width: 0; }
     #chat-input:focus { outline: none; border-color: rgba(139,232,238,0.4); }
@@ -754,11 +764,34 @@ export const INDEX_HTML = `<!doctype html>
       if (chatOpen) setTimeout(function(){ document.getElementById('chat-input').focus(); }, 40);
     }
 
+    function escMd(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+    // Minimal, XSS-safe markdown: HTML is escaped first, then a small set of inline
+    // formats become tags (code, bold, italic, http(s) links, line breaks). Because the
+    // text is escaped up front, only these controlled transforms can produce markup.
+    function renderMd(md){
+      var h = escMd(md);
+      h = h.replace(/\`([^\`]+)\`/g,'<code>$1</code>');
+      h = h.replace(/\\*\\*([^*]+)\\*\\*/g,'<strong>$1</strong>');
+      h = h.replace(/__([^_]+)__/g,'<strong>$1</strong>');
+      h = h.replace(/(^|[^*])\\*([^*\\n]+)\\*/g,'$1<em>$2</em>');
+      h = h.replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      h = h.replace(/\\n/g,'<br>');
+      return h;
+    }
+
     function addChatBubble(role, text) {
       var msgs = document.getElementById('chat-msgs');
       var div = document.createElement('div');
       div.className = 'chat-b ' + role;
-      div.textContent = text;
+      if (role === 'typing') {
+        // Animated three-dot loading indicator while the agent checks the registrar.
+        div.setAttribute('aria-label', 'Assistant is typing');
+        div.innerHTML = '<span class="chat-typing"><span></span><span></span><span></span></span>';
+      } else if (role === 'assistant') {
+        div.innerHTML = renderMd(text);
+      } else {
+        div.textContent = text;
+      }
       msgs.appendChild(div);
       msgs.scrollTop = msgs.scrollHeight;
     }
@@ -781,6 +814,7 @@ export const INDEX_HTML = `<!doctype html>
       // indicator stays visible during the tool-calling round-trip.
       var msgs = document.getElementById('chat-msgs');
       var bubble = null;
+      var bubbleRaw = '';
       function appendDelta(t) {
         if (!bubble) {
           removeChatTyping();
@@ -788,7 +822,10 @@ export const INDEX_HTML = `<!doctype html>
           bubble.className = 'chat-b assistant';
           msgs.appendChild(bubble);
         }
-        bubble.textContent += t;
+        // Accumulate raw markdown and re-render the whole bubble so multi-token
+        // spans (e.g. **bold**) resolve once their closing marker streams in.
+        bubbleRaw += t;
+        bubble.innerHTML = renderMd(bubbleRaw);
         msgs.scrollTop = msgs.scrollHeight;
       }
 
