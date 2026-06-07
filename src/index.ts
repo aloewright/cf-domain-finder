@@ -718,9 +718,9 @@ async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Pr
       const rows = await env.DB.prepare(
         "SELECT role, content FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC LIMIT 20"
       ).bind(sessionId).all();
-      history = ((rows.results ?? []) as Array<{ role: string; content: string }>)
-        .filter(r => r.role === "user" || r.role === "assistant")
-        .map(r => ({ role: r.role as "user" | "assistant", content: r.content }));
+      history = ((rows.results ?? []) as Array<{ role: string; content: string | null }>)
+        .filter(r => (r.role === "user" || r.role === "assistant") && r.content != null && r.content !== "")
+        .map(r => ({ role: r.role as "user" | "assistant", content: String(r.content) }));
     } catch { /* first session */ }
   }
 
@@ -737,9 +737,13 @@ async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Pr
       },
       required: ["domain"] as const
     }
-  }).server(async (args: unknown) =>
-    executeDomainCheck(String((args as { domain?: unknown }).domain ?? ""), env)
-  );
+  }).server(async (args: unknown) => {
+    // args is LLM-driven; guard against non-object/missing values before reading .domain.
+    const domain = args && typeof args === "object" && "domain" in args
+      ? String((args as { domain?: unknown }).domain ?? "")
+      : "";
+    return executeDomainCheck(domain, env);
+  });
 
   // Route the concrete Workers AI model through AI Gateway "x" for caching, observability,
   // and cost analytics (per the project's "always route through the gateway" policy) while
