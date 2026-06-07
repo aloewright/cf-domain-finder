@@ -1,4 +1,4 @@
-import { chat, toolDefinition, toServerSentEventsResponse, maxIterations } from "@tanstack/ai";
+import { chat, toServerSentEventsResponse } from "@tanstack/ai";
 // Import from the workers-ai subpath, not the package barrel: the barrel re-exports
 // every provider adapter (openai/gemini/grok/openrouter) and several have mismatched
 // exports that break the Worker bundle. The subpath pulls in only the Workers AI adapter.
@@ -724,27 +724,6 @@ async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Pr
     } catch { /* first session */ }
   }
 
-  // check_domain tool: uses the same Registrar API path as the results grid.
-  // toolDefinition() from @tanstack/ai creates a typed, isomorphic tool; .server() adds
-  // the execute function that runs in the Worker during the agentic loop.
-  const domainTool = toolDefinition({
-    name: "check_domain",
-    description: "Check if a specific domain name is available on Cloudflare Registrar and get its price. Call this whenever the user asks about domain availability or mentions a domain name.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        domain: { type: "string", description: "Full domain including TLD, e.g. 'mynext.link'" }
-      },
-      required: ["domain"] as const
-    }
-  }).server(async (args: unknown) => {
-    // args is LLM-driven; guard against non-object/missing values before reading .domain.
-    const domain = args && typeof args === "object" && "domain" in args
-      ? String((args as { domain?: unknown }).domain ?? "")
-      : "";
-    return executeDomainCheck(domain, env);
-  });
-
   // Route the concrete Workers AI model through AI Gateway "x" for caching, observability,
   // and cost analytics (per the project's "always route through the gateway" policy) while
   // still getting a usable stream.
@@ -764,24 +743,34 @@ async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Pr
       env.AI.run(model, inputs, { ...(options ?? {}), gateway: { id: "x" } }),
     gateway: (id: string) => env.AI.gateway(id)
   };
-  // gpt-oss-120b (OpenAI-lineage) emits structured tool_calls reliably while streaming;
-  // smaller Workers AI models (e.g. llama-3.1-8b-instruct-fp8) leak the call as plain text
-  // in streaming mode, so the agent never actually invokes the tool.
   const adapter = createWorkersAiChat("@cf/openai/gpt-oss-120b", {
     binding: gatewayAi
   });
 
-  // chat() from @tanstack/ai handles the full agentic tool-calling loop: LLM → tool call
-  // → executeDomainCheck → LLM → final text. maxIterations(3) caps it at 3 rounds.
-  // reasoning_effort:"low" keeps the reasoning model snappy (its thinking goes to STEP_*
-  // events, which the SSE client ignores — only TEXT_MESSAGE_CONTENT is rendered).
+  // Deterministic tool orchestration instead of model-driven function calling.
+  // Workers AI streaming + tools is unreliable: models (including gpt-oss-120b) intermittently
+  // emit the tool call as plain text rather than a structured tool_call, which leaks raw JSON
+  // to the user and never runs the tool. So we extract any domain(s) from the message and hit
+  // the Registrar ourselves, then let the model phrase the result with NO tools in the loop —
+  // nothing can leak, and the single model call streams cleanly token-by-token.
+  const systemPrompts = [
+    "You are a friendly domain availability assistant for blabout.com — a free tool for finding available domain names on Cloudflare at cost. Keep responses concise and friendly, and use light markdown (**bold** for domain names and prices). When Registrar results are provided below, base your answer strictly on them: say whether each domain is available, give the registration price when available, and encourage registering at cost. Never invent availability or prices. If no domain was provided, ask for a full domain like 'mynext.link'."
+  ];
+  const domains = Array.from(new Set(
+    (userMessage.match(/\b[a-z0-9][a-z0-9.-]{0,251}\.[a-z]{2,}\b/gi) || []).map(d => d.toLowerCase())
+  )).slice(0, 3);
+  if (domains.length) {
+    const results = await Promise.all(domains.map(d => executeDomainCheck(d, env)));
+    systemPrompts.push("Live Cloudflare Registrar results (JSON): " + JSON.stringify(results) + ". Use ONLY these for availability and price.");
+  }
+
+  // No tools are passed, so the model can't leak a tool call as text. reasoning_effort:"low"
+  // keeps the reasoning model snappy (its thinking goes to STEP_* events the SSE client ignores).
   const stream = chat({
     adapter,
     modelOptions: { reasoning_effort: "low" },
-    systemPrompts: ["You are a friendly domain availability assistant for blabout.com — a free tool for finding available domain names on Cloudflare at cost. When a user mentions a domain or asks about availability, always call the check_domain tool. Keep responses concise. When a domain is available, mention the price and encourage registration."],
-    messages: [...history, { role: "user" as const, content: userMessage }],
-    tools: [domainTool],
-    agentLoopStrategy: maxIterations(3)
+    systemPrompts,
+    messages: [...history, { role: "user" as const, content: userMessage }]
   });
 
   // Intercept the stream to collect the full text for D1 persistence, without delaying
