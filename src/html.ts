@@ -217,6 +217,35 @@ export const INDEX_HTML = `<!doctype html>
       .sidebar { position: static; }
       .step-title { font-size: 38px; }
     }
+
+    /* Domain agent chat widget */
+    #chat-widget { position: fixed; bottom: 24px; right: 24px; z-index: 900; display: flex; flex-direction: column; align-items: flex-end; gap: 14px; }
+    #chat-toggle { width: 52px; height: 52px; border-radius: var(--r-pill); background: var(--accent); border: none; cursor: pointer; color: #0d0e10; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 20px rgba(139,232,238,0.32), 0 0 0 4px rgba(139,232,238,0.08); transition: transform 0.2s ease, box-shadow 0.2s ease; }
+    #chat-toggle:hover { transform: scale(1.1); box-shadow: 0 6px 28px rgba(139,232,238,0.48), 0 0 0 6px rgba(139,232,238,0.12); }
+    #chat-toggle i, #chat-toggle svg { width: 22px; height: 22px; }
+    #chat-panel { width: 360px; background: var(--bg); border: 1px solid var(--glass-border); border-radius: var(--r-lg); display: none; flex-direction: column; max-height: 480px; box-shadow: 0 20px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(139,232,238,0.05); overflow: hidden; }
+    #chat-panel.open { display: flex; }
+    #chat-head { padding: 13px 16px; border-bottom: 1px solid var(--line); background: rgba(31,32,35,0.95); display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; }
+    .ch-meta { display: flex; align-items: center; gap: 9px; }
+    .ch-dot { width: 8px; height: 8px; border-radius: var(--r-pill); background: var(--good); box-shadow: 0 0 6px var(--good); flex: 0 0 auto; }
+    .ch-title { font-weight: 800; font-size: 14px; }
+    .ch-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+    .ch-close { background: none; border: none; cursor: pointer; color: var(--muted); padding: 4px; display: inline-flex; border-radius: 6px; }
+    .ch-close:hover { color: var(--text); }
+    .ch-close i, .ch-close svg { width: 15px; height: 15px; }
+    #chat-msgs { flex: 1; overflow-y: auto; padding: 14px 14px 6px; display: flex; flex-direction: column; gap: 10px; }
+    .chat-b { max-width: 90%; font-size: 14px; line-height: 1.55; padding: 9px 13px; border-radius: 16px; word-break: break-word; }
+    .chat-b.user { align-self: flex-end; background: var(--accent-soft); border: 1px solid rgba(139,232,238,0.22); border-bottom-right-radius: 4px; }
+    .chat-b.assistant { align-self: flex-start; background: rgba(31,32,35,0.95); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+    .chat-b.typing { color: var(--muted); font-style: italic; align-self: flex-start; background: rgba(31,32,35,0.6); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+    #chat-foot { padding: 10px 12px; border-top: 1px solid var(--line); background: rgba(13,14,16,0.7); display: flex; gap: 8px; align-items: center; flex: 0 0 auto; }
+    #chat-input { flex: 1; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 9px 15px; color: var(--text); font-size: 14px; font-weight: 500; min-width: 0; }
+    #chat-input:focus { outline: none; border-color: rgba(139,232,238,0.4); }
+    #chat-input::placeholder { color: rgba(244,241,236,0.28); }
+    #chat-send { width: 36px; height: 36px; border-radius: var(--r-pill); background: var(--accent); border: none; cursor: pointer; color: #0d0e10; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; transition: transform 0.15s ease; }
+    #chat-send:hover { transform: scale(1.1); }
+    #chat-send:disabled { opacity: 0.5; cursor: default; transform: none; }
+    #chat-send i, #chat-send svg { width: 16px; height: 16px; }
   </style>
 </head>
 <body>
@@ -354,6 +383,22 @@ export const INDEX_HTML = `<!doctype html>
       <div class="saved-head"><h2>Saved domains</h2><div class="close-x" onclick="hideSaved()"><i data-lucide="x"></i></div></div>
       <div id="saved-list"></div>
     </div>
+  </div>
+
+  <!-- Domain Agent -->
+  <div id="chat-widget">
+    <div id="chat-panel">
+      <div id="chat-head">
+        <div class="ch-meta"><span class="ch-dot"></span><div><div class="ch-title">Domain Agent</div><div class="ch-sub">Cloudflare Registrar · live data</div></div></div>
+        <button class="ch-close" onclick="toggleChat()"><i data-lucide="x"></i></button>
+      </div>
+      <div id="chat-msgs"></div>
+      <div id="chat-foot">
+        <input id="chat-input" type="text" placeholder="Is mynext.link available?" onkeydown="if(event.key==='Enter')sendChat()" />
+        <button id="chat-send" onclick="sendChat()"><i data-lucide="send"></i></button>
+      </div>
+    </div>
+    <button id="chat-toggle" onclick="toggleChat()"><i data-lucide="message-circle"></i></button>
   </div>
 
   <script>
@@ -689,6 +734,69 @@ export const INDEX_HTML = `<!doctype html>
     renderTldGrid();
     checkMe();
     lucide.createIcons();
+
+    // ---------- domain agent ----------
+    var chatOpen = false;
+    var chatSid = null;
+    var chatInited = false;
+    try { chatSid = localStorage.getItem('blab_chat'); } catch(e) {}
+
+    function toggleChat() {
+      chatOpen = !chatOpen;
+      document.getElementById('chat-panel').classList.toggle('open', chatOpen);
+      if (chatOpen && !chatInited) {
+        chatInited = true;
+        addChatBubble('assistant', 'Hi! Ask me if any domain is available — e.g. "Is mynext.link available?" or "Check harborquay.com"');
+      }
+      var btn = document.getElementById('chat-toggle');
+      btn.innerHTML = chatOpen ? '<i data-lucide="x"></i>' : '<i data-lucide="message-circle"></i>';
+      lucide.createIcons();
+      if (chatOpen) setTimeout(function(){ document.getElementById('chat-input').focus(); }, 40);
+    }
+
+    function addChatBubble(role, text) {
+      var msgs = document.getElementById('chat-msgs');
+      var div = document.createElement('div');
+      div.className = 'chat-b ' + role;
+      div.textContent = text;
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+
+    function removeChatTyping() {
+      document.querySelectorAll('.chat-b.typing').forEach(function(el){ el.remove(); });
+    }
+
+    async function sendChat() {
+      var input = document.getElementById('chat-input');
+      var msg = (input.value || '').trim();
+      if (!msg) return;
+      input.value = '';
+      addChatBubble('user', msg);
+      var sendBtn = document.getElementById('chat-send');
+      sendBtn.disabled = true;
+      addChatBubble('typing', 'Checking…');
+      try {
+        var res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ message: msg, sessionId: chatSid })
+        });
+        var data = await res.json();
+        removeChatTyping();
+        if (data.sessionId) {
+          chatSid = data.sessionId;
+          try { localStorage.setItem('blab_chat', chatSid); } catch(e) {}
+        }
+        addChatBubble('assistant', data.message || 'Something went wrong. Try again.');
+      } catch(e) {
+        removeChatTyping();
+        addChatBubble('assistant', 'Network error. Please try again.');
+      } finally {
+        sendBtn.disabled = false;
+        document.getElementById('chat-input').focus();
+      }
+    }
   </script>
 </body>
 </html>`;

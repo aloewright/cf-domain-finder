@@ -675,6 +675,155 @@ async function handleGround(request: Request, env: Env) {
   return json(await groundName(name, web, context, env));
 }
 
+// ---------- domain agent ----------
+
+type ChatTurn = {
+  role: string;
+  content: string | null;
+  tool_calls?: unknown;
+  tool_call_id?: string;
+  name?: string;
+};
+
+type AgentAIResponse = {
+  response?: string | null;
+  // Workers AI Llama format: arguments already parsed
+  tool_calls?: Array<{ name: string; arguments: Record<string, unknown> | string }>;
+  // OpenAI-compat format: arguments is a JSON string
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+      tool_calls?: Array<{ id?: string; function?: { name: string; arguments: string } }>;
+    };
+  }>;
+};
+
+const CHAT_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "check_domain",
+    description: "Check if a specific domain name is available for registration on Cloudflare Registrar and get its price. Call this whenever a user asks whether a domain is available, mentions a domain name, or wants pricing.",
+    parameters: {
+      type: "object",
+      properties: {
+        domain: { type: "string", description: "Full domain name, e.g. 'mynext.link' or 'harborquay.com'" }
+      },
+      required: ["domain"]
+    }
+  }
+};
+
+async function executeDomainCheck(rawDomain: string, env: Env): Promise<unknown> {
+  const d = rawDomain.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
+  if (!d.includes(".")) return { error: `Provide a full domain like '${d}.com'` };
+  const lastDot = d.lastIndexOf(".");
+  const baseName = d.slice(0, lastDot);
+  const tld = d.slice(lastDot + 1);
+  if (!baseName || tld.length < 2) return { error: `Invalid domain: ${d}` };
+  const map = await checkDomains([baseName], [tld], env);
+  const info = (map.get(baseName) ?? [])[0];
+  if (!info) return { domain: d, available: null, error: "Could not reach registrar" };
+  return {
+    domain: info.domain,
+    available: info.available,
+    registrationCost: info.registrationCost,
+    renewalCost: info.renewalCost,
+    currency: info.currency ?? "USD",
+    purchaseUrl: info.purchaseUrl,
+    reason: info.reason ?? null
+  };
+}
+
+// Agentic loop: call LLM → execute tool → call LLM → final answer. Up to 3 rounds.
+// Uses the same explicit Llama model as the rest of the app (CLAUDE.md "Inside a Worker" pattern).
+async function runChatAgent(messages: ChatTurn[], env: Env): Promise<string> {
+  for (let round = 0; round < 3; round++) {
+    const aiCall = env.AI.run(
+      "@cf/meta/llama-3.1-8b-instruct-fp8",
+      { messages, tools: [CHAT_TOOL], max_tokens: 512 },
+      { gateway: { id: "x" } }
+    ) as Promise<AgentAIResponse>;
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("timeout")), 15000)
+    );
+    const result = await Promise.race([aiCall, timeout]);
+
+    // Normalize: Llama (top-level tool_calls) or OpenAI-compat (choices[0].message.tool_calls)
+    const llamaCalls = result.tool_calls;
+    const oaiMsg = result.choices?.[0]?.message;
+    const oaiCalls = oaiMsg?.tool_calls;
+    const text = oaiMsg?.content ?? result.response ?? null;
+
+    if (oaiCalls?.length) {
+      messages.push({ role: "assistant", content: null, tool_calls: oaiCalls });
+      for (const tc of oaiCalls) {
+        let args: Record<string, unknown> = {};
+        try { args = JSON.parse(tc.function?.arguments ?? "{}"); } catch { /* best effort */ }
+        const toolResult = await executeDomainCheck(String(args.domain ?? ""), env);
+        messages.push({ role: "tool", content: JSON.stringify(toolResult), tool_call_id: tc.id ?? "call_0", name: tc.function?.name });
+      }
+    } else if (llamaCalls?.length) {
+      messages.push({ role: "assistant", content: null, tool_calls: llamaCalls });
+      for (const tc of llamaCalls) {
+        const rawArgs = tc.arguments;
+        const domain = typeof rawArgs === "string"
+          ? (JSON.parse(rawArgs) as Record<string, unknown>).domain
+          : (rawArgs as Record<string, unknown>).domain;
+        const toolResult = await executeDomainCheck(String(domain ?? ""), env);
+        messages.push({ role: "tool", content: JSON.stringify(toolResult), name: tc.name });
+      }
+    } else {
+      return (text ?? "").trim() || "Ask me about a specific domain — e.g. \"Is mynext.link available?\"";
+    }
+  }
+  return "I wasn't able to complete that check. Please try again.";
+}
+
+async function handleChat(request: Request, env: Env): Promise<Response> {
+  const userId = await requireUser(request, env);
+  const body = (await request.json().catch(() => ({}))) as { message?: string; sessionId?: string };
+  const userMessage = String(body.message ?? "").trim().slice(0, 600);
+  if (!userMessage) return json({ error: "Message required" }, { status: 400 });
+
+  const sessionId = String(body.sessionId ?? "").replace(/[^a-z0-9-]/gi, "").slice(0, 36) || crypto.randomUUID();
+
+  // Load prior conversation from D1 (authenticated users only; last 20 turns)
+  let history: ChatTurn[] = [];
+  if (userId && env.DB) {
+    try {
+      const rows = await env.DB.prepare(
+        "SELECT role, content FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC LIMIT 20"
+      ).bind(sessionId).all();
+      history = (rows.results ?? []) as ChatTurn[];
+    } catch { /* first session */ }
+  }
+
+  const messages: ChatTurn[] = [
+    {
+      role: "system",
+      content: "You are a friendly domain availability assistant for blabout.com — a free tool for finding available domains on Cloudflare at cost. When a user asks about a specific domain name, always call the check_domain tool with that exact domain. Keep answers concise. When a domain is available, mention the price and encourage registration."
+    },
+    ...history,
+    { role: "user", content: userMessage }
+  ];
+
+  const assistantMessage = await runChatAgent(messages, env);
+
+  // Persist to D1 for authenticated users (agentic memory across sessions)
+  if (userId && env.DB) {
+    const now = Date.now();
+    try {
+      await env.DB.batch([
+        env.DB.prepare("INSERT OR IGNORE INTO chat_sessions VALUES (?, ?, ?)").bind(sessionId, userId, now),
+        env.DB.prepare("INSERT INTO chat_messages VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), sessionId, "user", userMessage, now),
+        env.DB.prepare("INSERT INTO chat_messages VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), sessionId, "assistant", assistantMessage, now + 1)
+      ]);
+    } catch { /* best-effort; don't fail the response */ }
+  }
+
+  return json({ message: assistantMessage, sessionId });
+}
+
 function chunk<T>(items: T[], size: number) {
   const chunks: T[][] = [];
   for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
@@ -694,6 +843,7 @@ export default {
     if (m === "GET" && pathname === "/api/bookmarks") return handleListBookmarks(request, env);
     if (m === "POST" && pathname === "/api/bookmarks") return handleAddBookmark(request, env);
     if (m === "DELETE" && pathname === "/api/bookmarks") return handleDeleteBookmark(request, env);
+    if (m === "POST" && pathname === "/api/chat") return handleChat(request, env);
     if (m === "POST" && pathname === "/api/associate") return handleAssociate(request, env);
     if (m === "POST" && pathname === "/api/names") return handleNames(request, env);
     if (m === "POST" && pathname === "/api/enrich") return handleEnrich(request, env);
