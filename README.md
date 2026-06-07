@@ -1,9 +1,9 @@
-<a href="https://blabout.com"><img src="assets/banner.svg" alt="blabout — find available domains on Cloudflare" width="100%"></a>
+<a href="https://copythe.link"><img src="assets/banner.svg" alt="copythe.link — find available domains on Cloudflare" width="100%"></a>
 
 <p>
-  <a href="https://blabout.com"><img alt="Live demo" src="https://img.shields.io/badge/Live%20demo-blabout.com-00b0c0?style=flat-square&logo=cloudflare&logoColor=white&labelColor=555"></a>
-  <a href="https://blabout.com"><img alt="Cloudflare Workers" src="https://img.shields.io/badge/Cloudflare-Workers-F38020?style=flat-square&logo=cloudflare&logoColor=white&labelColor=555"></a>
-  <a href="https://blabout.com"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white&labelColor=555"></a>
+  <a href="https://copythe.link"><img alt="Live demo" src="https://img.shields.io/badge/Live%20demo-copythe.link-00b0c0?style=flat-square&logo=cloudflare&logoColor=white&labelColor=555"></a>
+  <a href="https://copythe.link"><img alt="Cloudflare Workers" src="https://img.shields.io/badge/Cloudflare-Workers-F38020?style=flat-square&logo=cloudflare&logoColor=white&labelColor=555"></a>
+  <a href="https://copythe.link"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white&labelColor=555"></a>
   <img alt="License: ISC" src="https://img.shields.io/badge/License-ISC-blue?style=flat-square&labelColor=555">
 </p>
 
@@ -19,7 +19,7 @@ Cloudflare Domain Finder is a free, open-source tool I built to help people find
 - Live `.com` and multi-TLD availability and pricing come straight from the Cloudflare Registrar API — at Cloudflare's at-cost pricing.
 - App Store collision check via the Apple Search API; live seed-word suggestions as you type.
 - Create an account to bookmark the domains you like and compare them in one place.
-- A Cloudflare Worker, with users and bookmarks in D1. Deployed at `https://blabout.com`.
+- A Cloudflare Worker, with users and bookmarks in D1. Deployed at `https://copythe.link`.
 
 ## Commands
 

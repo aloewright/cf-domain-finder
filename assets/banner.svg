@@ -36,7 +36,7 @@
     </g>
 
     <!-- title -->
-    <text x="0" y="128" font-size="76" font-weight="900" letter-spacing="-2.4" fill="url(#title)">blabout</text>
+    <text x="0" y="128" font-size="76" font-weight="900" letter-spacing="-2.4"><tspan fill="url(#title)">copythe</tspan><tspan fill="#8be8ee">.link</tspan></text>
 
     <!-- tagline -->
     <text x="0" y="208" font-size="20" font-weight="500" fill="#f4f1ec" fill-opacity="0.66">Generate brandable name ideas, check live availability and</text>
@@ -44,7 +44,7 @@
 
     <!-- url -->
     <circle cx="6" cy="272" r="5" fill="#8ef0b4"/>
-    <text x="20" y="278" font-size="16" font-weight="800" fill="#8be8ee">blabout.com</text>
+    <text x="20" y="278" font-size="16" font-weight="800" fill="#8be8ee">copythe.link</text>
   </g>
 
   <!-- Card -->
@@ -60,7 +60,7 @@
       <text x="28" y="33" text-anchor="middle" font-size="16" font-weight="900" fill="#f4f1ec">78</text>
     </g>
 
-    <text x="26" y="78" font-size="13" font-weight="500" fill="#f4f1ec" fill-opacity="0.6">Harborquay — Private AI</text>
+    <text x="26" y="78" font-size="13" font-weight="500" fill="#f4f1ec" fill-opacity="0.6">A sturdy, trusted harbor brand</text>
 
     <!-- domain row -->
     <rect x="26" y="98" width="298" height="48" rx="14" fill="#8ef0b4" fill-opacity="0.1"/>

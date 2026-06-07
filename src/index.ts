@@ -817,7 +817,7 @@ async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Pr
   // the Registrar ourselves, then let the model phrase the result with NO tools in the loop —
   // nothing can leak, and the single model call streams cleanly token-by-token.
   const systemPrompts = [
-    "You are a friendly domain availability assistant for blabout.com — a free tool for finding available domain names on Cloudflare at cost. Keep responses concise and friendly, and use light markdown (**bold** for domain names and prices). When Registrar results are provided below, base your answer strictly on them: say whether each domain is available, give the registration price when available, and encourage registering at cost. Never invent availability or prices. If no domain was provided, ask for a full domain like 'mynext.link'."
+    "You are a friendly domain availability assistant for copythe.link — a free tool for finding available domain names on Cloudflare at cost. Keep responses concise and friendly, and use light markdown (**bold** for domain names and prices). When Registrar results are provided below, base your answer strictly on them: say whether each domain is available, give the registration price when available, and encourage registering at cost. Never invent availability or prices. If no domain was provided, ask for a full domain like 'mynext.link'."
   ];
   const domains = Array.from(new Set(
     (userMessage.match(/\b[a-z0-9][a-z0-9.-]{0,251}\.[a-z]{2,}\b/gi) || []).map(d => d.toLowerCase())
