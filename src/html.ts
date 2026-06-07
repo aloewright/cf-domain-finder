@@ -776,22 +776,78 @@ export const INDEX_HTML = `<!doctype html>
       var sendBtn = document.getElementById('chat-send');
       sendBtn.disabled = true;
       addChatBubble('typing', 'Checking…');
+
+      // Live assistant bubble, created on first streamed token so the typing
+      // indicator stays visible during the tool-calling round-trip.
+      var msgs = document.getElementById('chat-msgs');
+      var bubble = null;
+      function appendDelta(t) {
+        if (!bubble) {
+          removeChatTyping();
+          bubble = document.createElement('div');
+          bubble.className = 'chat-b assistant';
+          msgs.appendChild(bubble);
+        }
+        bubble.textContent += t;
+        msgs.scrollTop = msgs.scrollHeight;
+      }
+
       try {
         var res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ message: msg, sessionId: chatSid })
         });
-        var data = await res.json();
-        removeChatTyping();
-        if (data.sessionId) {
-          chatSid = data.sessionId;
+
+        // Server hands back the session id as a header so memory persists across turns.
+        var sid = res.headers.get('x-chat-session');
+        if (sid) {
+          chatSid = sid;
           try { localStorage.setItem('blab_chat', chatSid); } catch(e) {}
         }
-        addChatBubble('assistant', data.message || 'Something went wrong. Try again.');
+
+        // Non-stream error responses (e.g. 400) come back as JSON, not SSE.
+        if (!res.ok || !res.body) {
+          var errText = 'Something went wrong. Try again.';
+          try { var ej = await res.json(); if (ej && ej.error) errText = ej.error; } catch(e) {}
+          removeChatTyping();
+          addChatBubble('assistant', errText);
+          return;
+        }
+
+        // Parse the AG-UI SSE stream: events are "data: {json}\\n\\n"; we surface the
+        // text deltas from TEXT_MESSAGE_CONTENT and flag RUN_ERROR.
+        var reader = res.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+        var errored = false;
+        while (true) {
+          var r = await reader.read();
+          if (r.done) break;
+          buffer += decoder.decode(r.value, { stream: true });
+          var sep;
+          while ((sep = buffer.indexOf('\\n\\n')) !== -1) {
+            var raw = buffer.slice(0, sep).trim();
+            buffer = buffer.slice(sep + 2);
+            if (!raw || raw.indexOf('data:') !== 0) continue;
+            var payload = raw.slice(5).trim();
+            if (!payload || payload === '[DONE]') continue;
+            var evt;
+            try { evt = JSON.parse(payload); } catch(e) { continue; }
+            if (evt.type === 'TEXT_MESSAGE_CONTENT' && evt.delta) appendDelta(evt.delta);
+            else if (evt.type === 'RUN_ERROR') errored = true;
+          }
+        }
+
+        removeChatTyping();
+        if (!bubble) {
+          addChatBubble('assistant', errored
+            ? 'Sorry — something went wrong. Please try again.'
+            : 'Sorry — I could not generate a response. Try again.');
+        }
       } catch(e) {
         removeChatTyping();
-        addChatBubble('assistant', 'Network error. Please try again.');
+        if (!bubble) addChatBubble('assistant', 'Network error. Please try again.');
       } finally {
         sendBtn.disabled = false;
         document.getElementById('chat-input').focus();
