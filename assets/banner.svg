@@ -36,8 +36,7 @@
     </g>
 
     <!-- title -->
-    <text x="0" y="98" font-size="60" font-weight="900" letter-spacing="-1.6" fill="url(#title)">Cloudflare</text>
-    <text x="0" y="158" font-size="60" font-weight="900" letter-spacing="-1.6" fill="url(#title)">Domain Finder</text>
+    <text x="0" y="128" font-size="76" font-weight="900" letter-spacing="-2.4" fill="url(#title)">blabout</text>
 
     <!-- tagline -->
     <text x="0" y="208" font-size="20" font-weight="500" fill="#f4f1ec" fill-opacity="0.66">Generate brandable name ideas, check live availability and</text>
