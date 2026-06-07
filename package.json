@@ -18,5 +18,9 @@
     "@cloudflare/workers-types": "^4.20260514.0",
     "typescript": "^5.9.3",
     "wrangler": "^4.98.0"
+  },
+  "dependencies": {
+    "@cloudflare/tanstack-ai": "^0.1.9",
+    "@tanstack/ai": "^0.28.0"
   }
 }

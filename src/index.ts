@@ -1,3 +1,8 @@
+import { chat, toolDefinition, toServerSentEventsResponse, maxIterations } from "@tanstack/ai";
+// Import from the workers-ai subpath, not the package barrel: the barrel re-exports
+// every provider adapter (openai/gemini/grok/openrouter) and several have mismatched
+// exports that break the Worker bundle. The subpath pulls in only the Workers AI adapter.
+import { createWorkersAiChat } from "@cloudflare/tanstack-ai/adapters/workers-ai";
 import { NUNITO_WOFF2_BASE64 } from "./nunito";
 import { INDEX_HTML } from "./html";
 import { Env, json } from "./shared";
@@ -675,43 +680,7 @@ async function handleGround(request: Request, env: Env) {
   return json(await groundName(name, web, context, env));
 }
 
-// ---------- domain agent ----------
-
-type ChatTurn = {
-  role: string;
-  content: string | null;
-  tool_calls?: unknown;
-  tool_call_id?: string;
-  name?: string;
-};
-
-type AgentAIResponse = {
-  response?: string | null;
-  // Workers AI Llama format: arguments already parsed
-  tool_calls?: Array<{ name: string; arguments: Record<string, unknown> | string }>;
-  // OpenAI-compat format: arguments is a JSON string
-  choices?: Array<{
-    message?: {
-      content?: string | null;
-      tool_calls?: Array<{ id?: string; function?: { name: string; arguments: string } }>;
-    };
-  }>;
-};
-
-const CHAT_TOOL = {
-  type: "function" as const,
-  function: {
-    name: "check_domain",
-    description: "Check if a specific domain name is available for registration on Cloudflare Registrar and get its price. Call this whenever a user asks whether a domain is available, mentions a domain name, or wants pricing.",
-    parameters: {
-      type: "object",
-      properties: {
-        domain: { type: "string", description: "Full domain name, e.g. 'mynext.link' or 'harborquay.com'" }
-      },
-      required: ["domain"]
-    }
-  }
-};
+// ---------- domain agent (TanStack AI + @cloudflare/tanstack-ai) ----------
 
 async function executeDomainCheck(rawDomain: string, env: Env): Promise<unknown> {
   const d = rawDomain.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
@@ -734,52 +703,7 @@ async function executeDomainCheck(rawDomain: string, env: Env): Promise<unknown>
   };
 }
 
-// Agentic loop: call LLM → execute tool → call LLM → final answer. Up to 3 rounds.
-// Uses the same explicit Llama model as the rest of the app (CLAUDE.md "Inside a Worker" pattern).
-async function runChatAgent(messages: ChatTurn[], env: Env): Promise<string> {
-  for (let round = 0; round < 3; round++) {
-    const aiCall = env.AI.run(
-      "@cf/meta/llama-3.1-8b-instruct-fp8",
-      { messages, tools: [CHAT_TOOL], max_tokens: 512 },
-      { gateway: { id: "x" } }
-    ) as Promise<AgentAIResponse>;
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("timeout")), 15000)
-    );
-    const result = await Promise.race([aiCall, timeout]);
-
-    // Normalize: Llama (top-level tool_calls) or OpenAI-compat (choices[0].message.tool_calls)
-    const llamaCalls = result.tool_calls;
-    const oaiMsg = result.choices?.[0]?.message;
-    const oaiCalls = oaiMsg?.tool_calls;
-    const text = oaiMsg?.content ?? result.response ?? null;
-
-    if (oaiCalls?.length) {
-      messages.push({ role: "assistant", content: null, tool_calls: oaiCalls });
-      for (const tc of oaiCalls) {
-        let args: Record<string, unknown> = {};
-        try { args = JSON.parse(tc.function?.arguments ?? "{}"); } catch { /* best effort */ }
-        const toolResult = await executeDomainCheck(String(args.domain ?? ""), env);
-        messages.push({ role: "tool", content: JSON.stringify(toolResult), tool_call_id: tc.id ?? "call_0", name: tc.function?.name });
-      }
-    } else if (llamaCalls?.length) {
-      messages.push({ role: "assistant", content: null, tool_calls: llamaCalls });
-      for (const tc of llamaCalls) {
-        const rawArgs = tc.arguments;
-        const domain = typeof rawArgs === "string"
-          ? (JSON.parse(rawArgs) as Record<string, unknown>).domain
-          : (rawArgs as Record<string, unknown>).domain;
-        const toolResult = await executeDomainCheck(String(domain ?? ""), env);
-        messages.push({ role: "tool", content: JSON.stringify(toolResult), name: tc.name });
-      }
-    } else {
-      return (text ?? "").trim() || "Ask me about a specific domain — e.g. \"Is mynext.link available?\"";
-    }
-  }
-  return "I wasn't able to complete that check. Please try again.";
-}
-
-async function handleChat(request: Request, env: Env): Promise<Response> {
+async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const userId = await requireUser(request, env);
   const body = (await request.json().catch(() => ({}))) as { message?: string; sessionId?: string };
   const userMessage = String(body.message ?? "").trim().slice(0, 600);
@@ -787,41 +711,120 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
 
   const sessionId = String(body.sessionId ?? "").replace(/[^a-z0-9-]/gi, "").slice(0, 36) || crypto.randomUUID();
 
-  // Load prior conversation from D1 (authenticated users only; last 20 turns)
-  let history: ChatTurn[] = [];
+  // Load conversation history from D1 for authenticated users (agentic memory)
+  let history: Array<{ role: "user" | "assistant"; content: string }> = [];
   if (userId && env.DB) {
     try {
       const rows = await env.DB.prepare(
         "SELECT role, content FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC LIMIT 20"
       ).bind(sessionId).all();
-      history = (rows.results ?? []) as ChatTurn[];
+      history = ((rows.results ?? []) as Array<{ role: string; content: string }>)
+        .filter(r => r.role === "user" || r.role === "assistant")
+        .map(r => ({ role: r.role as "user" | "assistant", content: r.content }));
     } catch { /* first session */ }
   }
 
-  const messages: ChatTurn[] = [
-    {
-      role: "system",
-      content: "You are a friendly domain availability assistant for blabout.com — a free tool for finding available domains on Cloudflare at cost. When a user asks about a specific domain name, always call the check_domain tool with that exact domain. Keep answers concise. When a domain is available, mention the price and encourage registration."
-    },
-    ...history,
-    { role: "user", content: userMessage }
-  ];
+  // check_domain tool: uses the same Registrar API path as the results grid.
+  // toolDefinition() from @tanstack/ai creates a typed, isomorphic tool; .server() adds
+  // the execute function that runs in the Worker during the agentic loop.
+  const domainTool = toolDefinition({
+    name: "check_domain",
+    description: "Check if a specific domain name is available on Cloudflare Registrar and get its price. Call this whenever the user asks about domain availability or mentions a domain name.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        domain: { type: "string", description: "Full domain including TLD, e.g. 'mynext.link'" }
+      },
+      required: ["domain"] as const
+    }
+  }).server(async (args: unknown) =>
+    executeDomainCheck(String((args as { domain?: unknown }).domain ?? ""), env)
+  );
 
-  const assistantMessage = await runChatAgent(messages, env);
+  // Route the concrete Workers AI model through AI Gateway "x" for caching, observability,
+  // and cost analytics (per the project's "always route through the gateway" policy) while
+  // still getting a usable stream.
+  //
+  // Why a proxy and not { binding: env.AI.gateway("x") }: the adapter's gateway modes
+  // (createGatewayFetch) return the raw Workers AI response — native shape `{ response: ... }`,
+  // no OpenAI `choices` — so the OpenAI SDK parser skips every chunk and emits zero events
+  // (observed: 200 OK, empty SSE body, ~89ms). Only the adapter's *direct-binding* fetch wraps
+  // the result in transformWorkersAiStream (Workers AI SSE → OpenAI SSE), which the parser needs.
+  //
+  // This proxy keeps a `gateway()` method so the adapter picks the transform-enabled direct
+  // path (isDirectBindingConfig checks `typeof binding.gateway === "function"`), and its run()
+  // injects the sanctioned `{ gateway: { id: "x" } }` third arg — i.e. the exact, working
+  // Worker-side pattern: env.AI.run("@cf/...", inputs, { gateway: { id: "x" } }).
+  const gatewayAi: any = {
+    run: (model: string, inputs: unknown, options?: Record<string, unknown>) =>
+      env.AI.run(model, inputs, { ...(options ?? {}), gateway: { id: "x" } }),
+    gateway: (id: string) => env.AI.gateway(id)
+  };
+  // gpt-oss-120b (OpenAI-lineage) emits structured tool_calls reliably while streaming;
+  // smaller Workers AI models (e.g. llama-3.1-8b-instruct-fp8) leak the call as plain text
+  // in streaming mode, so the agent never actually invokes the tool.
+  const adapter = createWorkersAiChat("@cf/openai/gpt-oss-120b", {
+    binding: gatewayAi
+  });
 
-  // Persist to D1 for authenticated users (agentic memory across sessions)
-  if (userId && env.DB) {
-    const now = Date.now();
+  // chat() from @tanstack/ai handles the full agentic tool-calling loop: LLM → tool call
+  // → executeDomainCheck → LLM → final text. maxIterations(3) caps it at 3 rounds.
+  // reasoning_effort:"low" keeps the reasoning model snappy (its thinking goes to STEP_*
+  // events, which the SSE client ignores — only TEXT_MESSAGE_CONTENT is rendered).
+  const stream = chat({
+    adapter,
+    modelOptions: { reasoning_effort: "low" },
+    systemPrompts: ["You are a friendly domain availability assistant for blabout.com — a free tool for finding available domain names on Cloudflare at cost. When a user mentions a domain or asks about availability, always call the check_domain tool. Keep responses concise. When a domain is available, mention the price and encourage registration."],
+    messages: [...history, { role: "user" as const, content: userMessage }],
+    tools: [domainTool],
+    agentLoopStrategy: maxIterations(3)
+  });
+
+  // Intercept the stream to collect the full text for D1 persistence, without delaying
+  // the streaming response. The promise resolves when the stream is fully consumed.
+  let collectedText = "";
+  let streamResolved: (() => void) | undefined;
+  const streamDone = new Promise<void>(r => { streamResolved = r; });
+
+  async function* interceptAndCollect() {
     try {
-      await env.DB.batch([
-        env.DB.prepare("INSERT OR IGNORE INTO chat_sessions VALUES (?, ?, ?)").bind(sessionId, userId, now),
-        env.DB.prepare("INSERT INTO chat_messages VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), sessionId, "user", userMessage, now),
-        env.DB.prepare("INSERT INTO chat_messages VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), sessionId, "assistant", assistantMessage, now + 1)
-      ]);
-    } catch { /* best-effort; don't fail the response */ }
+      for await (const chunk of stream) {
+        if (chunk.type === "TEXT_MESSAGE_CONTENT") {
+          const c = chunk as unknown as { delta?: string };
+          if (c.delta) collectedText += c.delta;
+        }
+        yield chunk;
+      }
+    } finally {
+      streamResolved?.();
+    }
   }
 
-  return json({ message: assistantMessage, sessionId });
+  // D1 write happens after the response stream completes — no delay for the user.
+  if (userId && env.DB) {
+    const sid = sessionId, uid = userId, msg = userMessage;
+    ctx.waitUntil(
+      streamDone.then(async () => {
+        if (!collectedText) return;
+        const now = Date.now();
+        try {
+          await env.DB.batch([
+            env.DB.prepare("INSERT OR IGNORE INTO chat_sessions VALUES (?, ?, ?)").bind(sid, uid, now),
+            env.DB.prepare("INSERT INTO chat_messages VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), sid, "user", msg, now),
+            env.DB.prepare("INSERT INTO chat_messages VALUES (?, ?, ?, ?, ?)").bind(crypto.randomUUID(), sid, "assistant", collectedText, now + 1)
+          ]);
+        } catch { /* best-effort */ }
+      })
+    );
+  }
+
+  // Stream SSE to client; send the session ID as a header so the frontend can persist it.
+  return toServerSentEventsResponse(interceptAndCollect(), {
+    headers: {
+      "x-chat-session": sessionId,
+      "access-control-expose-headers": "x-chat-session"
+    }
+  });
 }
 
 function chunk<T>(items: T[], size: number) {
@@ -831,7 +834,7 @@ function chunk<T>(items: T[], size: number) {
 }
 
 export default {
-  async fetch(request: Request, env: Env) {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const { pathname } = new URL(request.url);
     const m = request.method;
     if (m === "GET" && pathname === "/") return html();
@@ -843,7 +846,7 @@ export default {
     if (m === "GET" && pathname === "/api/bookmarks") return handleListBookmarks(request, env);
     if (m === "POST" && pathname === "/api/bookmarks") return handleAddBookmark(request, env);
     if (m === "DELETE" && pathname === "/api/bookmarks") return handleDeleteBookmark(request, env);
-    if (m === "POST" && pathname === "/api/chat") return handleChat(request, env);
+    if (m === "POST" && pathname === "/api/chat") return handleChat(request, env, ctx);
     if (m === "POST" && pathname === "/api/associate") return handleAssociate(request, env);
     if (m === "POST" && pathname === "/api/names") return handleNames(request, env);
     if (m === "POST" && pathname === "/api/enrich") return handleEnrich(request, env);
