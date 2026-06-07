@@ -242,6 +242,10 @@ export const INDEX_HTML = `<!doctype html>
     .chat-b.assistant em { font-style: italic; }
     .chat-b.assistant code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: var(--accent-soft); padding: 1px 5px; border-radius: 5px; }
     .chat-b.assistant a { color: var(--accent); text-decoration: underline; }
+    .chat-b.assistant table.chat-table { border-collapse: collapse; width: 100%; margin: 7px 0; font-size: 12px; }
+    .chat-b.assistant table.chat-table th, .chat-b.assistant table.chat-table td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+    .chat-b.assistant table.chat-table th { background: var(--accent-soft); font-weight: 700; color: var(--text); }
+    .chat-b.assistant table.chat-table tr:nth-child(even) td { background: rgba(255,255,255,0.03); }
     .chat-typing { display: inline-flex; gap: 5px; align-items: center; height: 8px; }
     .chat-typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); opacity: 0.4; animation: chatDot 1.2s infinite ease-in-out; }
     .chat-typing span:nth-child(2) { animation-delay: 0.18s; }
@@ -765,18 +769,44 @@ export const INDEX_HTML = `<!doctype html>
     }
 
     function escMd(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
-    // Minimal, XSS-safe markdown: HTML is escaped first, then a small set of inline
-    // formats become tags (code, bold, italic, http(s) links, line breaks). Because the
-    // text is escaped up front, only these controlled transforms can produce markup.
+    // Minimal, XSS-safe markdown: HTML is escaped first, then a small set of formats become
+    // tags — inline (code, bold, italic, http(s) links) plus block-level GFM tables and line
+    // breaks. Escaping up front means only these controlled transforms can produce markup.
+    function mdInline(s){
+      s = s.replace(/\`([^\`]+)\`/g,'<code>$1</code>');
+      s = s.replace(/\\*\\*([^*]+)\\*\\*/g,'<strong>$1</strong>');
+      s = s.replace(/__([^_]+)__/g,'<strong>$1</strong>');
+      s = s.replace(/(^|[^*])\\*([^*]+)\\*/g,'$1<em>$2</em>');
+      s = s.replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      return s;
+    }
+    function mdCells(row){ return row.trim().replace(/^\\||\\|$/g,'').split('|').map(function(c){ return c.trim(); }); }
+    var MD_SEP = /^\\s*\\|?(\\s*:?-+:?\\s*\\|)+\\s*:?-+:?\\s*\\|?\\s*$/;
     function renderMd(md){
-      var h = escMd(md);
-      h = h.replace(/\`([^\`]+)\`/g,'<code>$1</code>');
-      h = h.replace(/\\*\\*([^*]+)\\*\\*/g,'<strong>$1</strong>');
-      h = h.replace(/__([^_]+)__/g,'<strong>$1</strong>');
-      h = h.replace(/(^|[^*])\\*([^*\\n]+)\\*/g,'$1<em>$2</em>');
-      h = h.replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-      h = h.replace(/\\n/g,'<br>');
-      return h;
+      var lines = escMd(md).split('\\n');
+      var html = '', i = 0, n = lines.length;
+      while (i < n){
+        // GFM table: a row with a pipe immediately followed by a |---|---| separator line.
+        if (lines[i].indexOf('|') !== -1 && i+1 < n && MD_SEP.test(lines[i+1])){
+          var head = mdCells(lines[i]);
+          var aligns = mdCells(lines[i+1]).map(function(c){ var L=c.charAt(0)===':', R=c.charAt(c.length-1)===':'; return (L&&R)?'center':R?'right':L?'left':''; });
+          i += 2;
+          var body = [];
+          while (i < n && lines[i].indexOf('|') !== -1 && lines[i].trim() !== ''){ body.push(mdCells(lines[i])); i++; }
+          var t = '<table class="chat-table"><thead><tr>';
+          head.forEach(function(c,x){ t += '<th'+(aligns[x]?' style="text-align:'+aligns[x]+'"':'')+'>'+mdInline(c)+'</th>'; });
+          t += '</tr></thead><tbody>';
+          body.forEach(function(r){ t += '<tr>'; head.forEach(function(u,x){ t += '<td'+(aligns[x]?' style="text-align:'+aligns[x]+'"':'')+'>'+mdInline(r[x]!=null?r[x]:'')+'</td>'; }); t += '</tr>'; });
+          t += '</tbody></table>';
+          html += t;
+        } else {
+          html += mdInline(lines[i]);
+          // join text lines with <br>, but not the line right before a table block
+          if (i+1 < n && !(lines[i+1].indexOf('|')!==-1 && i+2 < n && MD_SEP.test(lines[i+2]))) html += '<br>';
+          i++;
+        }
+      }
+      return html;
     }
 
     function addChatBubble(role, text) {
