@@ -323,30 +323,25 @@ function unknownDomain(domain: string, tld: string): DomainInfo {
 
 // Confirm availability + price for name x TLD via the Cloudflare Registrar API (beta) Check
 // endpoint (≤20 domains/request). Bounded + graceful: missing creds/error/timeout → unknown.
-async function checkDomains(names: string[], tlds: string[], env: Env): Promise<Map<string, DomainInfo[]>> {
-  const byName = new Map<string, DomainInfo[]>();
-  const lookup = new Map<string, { name: string; tld: string }>();
-  const allDomains: string[] = [];
-  for (const name of names) {
-    const lower = name.toLowerCase();
-    if (!byName.has(lower)) byName.set(lower, []);
-    for (const tld of tlds) {
-      const domain = `${lower}.${tld}`;
-      if (!lookup.has(domain)) {
-        lookup.set(domain, { name: lower, tld });
-        allDomains.push(domain);
-      }
-      byName.get(lower)!.push(unknownDomain(domain, tld));
-    }
+// Check a list of explicit full domains against the registrar, one DomainInfo per unique
+// domain (domains the registrar doesn't return stay "unknown"). Shared by checkDomains (the
+// results grid) and the /api/hacks/check endpoint (domain-hack variants).
+async function checkDomainList(domains: string[], env: Env): Promise<DomainInfo[]> {
+  const out = new Map<string, DomainInfo>();
+  for (const raw of domains) {
+    const d = String(raw).trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
+    if (!d.includes(".") || out.has(d)) continue;
+    out.set(d, unknownDomain(d, d.slice(d.lastIndexOf(".") + 1)));
   }
 
   const accountId = env.CLOUDFLARE_ACCOUNT_ID;
   const email = env.CLOUDFLARE_EMAIL;
   const apiKey = env.CLOUDFLARE_API_KEY;
-  if (!accountId || !email || !apiKey || allDomains.length === 0) return byName;
+  const all = [...out.keys()];
+  if (!accountId || !email || !apiKey || all.length === 0) return [...out.values()];
 
   await Promise.all(
-    chunk(allDomains, 20).map(async (batch) => {
+    chunk(all, 20).map(async (batch) => {
       try {
         const response = await fetch(
           `https://api.cloudflare.com/client/v4/accounts/${accountId}/registrar/domain-check`,
@@ -367,30 +362,66 @@ async function checkDomains(names: string[], tlds: string[], env: Env): Promise<
           };
         };
         for (const entry of payload.result?.domains ?? []) {
-          const ref = lookup.get(entry.name);
-          if (!ref) continue;
-          const list = byName.get(ref.name);
-          if (!list) continue;
-          const info: DomainInfo = {
+          if (!out.has(entry.name)) continue;
+          out.set(entry.name, {
             domain: entry.name,
-            tld: ref.tld,
+            tld: entry.name.slice(entry.name.lastIndexOf(".") + 1),
             available: entry.registrable ?? null,
             registrationCost: entry.pricing?.registration_cost ?? null,
             renewalCost: entry.pricing?.renewal_cost ?? null,
             currency: entry.pricing?.currency ?? null,
             reason: entry.reason,
             purchaseUrl: PURCHASE_URL
-          };
-          const idx = list.findIndex((d) => d.domain === entry.name);
-          if (idx >= 0) list[idx] = info;
-          else list.push(info);
+          });
         }
       } catch {
         // Leave this batch "unknown".
       }
     })
   );
+  return [...out.values()];
+}
+
+// Build name×tld combinations, check them, and group the results by base name.
+async function checkDomains(names: string[], tlds: string[], env: Env): Promise<Map<string, DomainInfo[]>> {
+  const byName = new Map<string, DomainInfo[]>();
+  const lookup = new Map<string, { name: string; tld: string }>();
+  const allDomains: string[] = [];
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    if (!byName.has(lower)) byName.set(lower, []);
+    for (const tld of tlds) {
+      const domain = `${lower}.${tld}`;
+      if (!lookup.has(domain)) {
+        lookup.set(domain, { name: lower, tld });
+        allDomains.push(domain);
+      }
+      byName.get(lower)!.push(unknownDomain(domain, tld));
+    }
+  }
+  for (const info of await checkDomainList(allDomains, env)) {
+    const ref = lookup.get(info.domain);
+    if (!ref) continue;
+    const list = byName.get(ref.name);
+    if (!list) continue;
+    const merged: DomainInfo = { ...info, tld: ref.tld };
+    const idx = list.findIndex((d) => d.domain === info.domain);
+    if (idx >= 0) list[idx] = merged;
+    else list.push(merged);
+  }
   return byName;
+}
+
+// POST /api/hacks/check — availability for a batch of explicit domain-hack variants.
+async function handleHacksCheck(request: Request, env: Env) {
+  const userId = await requireUser(request, env);
+  if (!userId) return json({ error: "Authentication required" }, { status: 401 });
+  const body = (await request.json().catch(() => ({}))) as { domains?: unknown };
+  const domains = Array.isArray(body.domains)
+    ? body.domains.map((d) => String(d)).filter(Boolean).slice(0, 100)
+    : [];
+  if (domains.length === 0) return json({ results: [] });
+  return json({ results: await checkDomainList(domains, env) });
 }
 
 function html() {
@@ -843,6 +874,7 @@ export default {
     if (m === "POST" && pathname === "/api/associate") return handleAssociate(request, env);
     if (m === "POST" && pathname === "/api/names") return handleNames(request, env);
     if (m === "POST" && pathname === "/api/enrich") return handleEnrich(request, env);
+    if (m === "POST" && pathname === "/api/hacks/check") return handleHacksCheck(request, env);
     if (m === "POST" && pathname === "/api/suggest") return handleSuggest(request, env);
     if (m === "POST" && pathname === "/api/ground") return handleGround(request, env);
     if (m === "GET" && pathname === "/api/check") return handleCheck(request, env);

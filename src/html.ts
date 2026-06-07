@@ -186,6 +186,17 @@ export const INDEX_HTML = `<!doctype html>
 
     .scroll-status { text-align: center; color: var(--muted); padding: 32px 0 8px; font-weight: 600; grid-column: 1 / -1; }
     .spinner { width: 22px; height: 22px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: var(--r-pill); display: inline-block; animation: spin 0.8s linear infinite; vertical-align: middle; }
+    .spinner-sm { width: 13px; height: 13px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; display: inline-block; animation: spin 0.8s linear infinite; vertical-align: middle; }
+    .hack-grid-toggles { display: flex; flex-wrap: wrap; gap: 8px; }
+    .hack-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: var(--r-pill); border: 1px solid var(--line); background: rgba(255,255,255,0.04); font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.18s ease; user-select: none; }
+    .hack-toggle:hover { background: rgba(255,255,255,0.08); }
+    .hack-toggle.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+    .hacks-head { margin: 4px 0 16px; }
+    .hacks-head h3 { margin: 0; font-size: 20px; font-weight: 900; letter-spacing: -0.01em; }
+    .hacks-head p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+    #hacks-grid { margin-bottom: 28px; }
+    .result-card.hack-card { border-color: rgba(139,232,238,0.3); }
+    .hack-badge { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); background: var(--accent-soft); padding: 3px 9px; border-radius: var(--r-pill); align-self: flex-start; white-space: nowrap; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     .site-footer { margin-top: auto; padding-top: 56px; text-align: center; color: var(--muted); font-size: 13px; font-weight: 600; }
@@ -354,12 +365,29 @@ export const INDEX_HTML = `<!doctype html>
               <span class="switch on" id="hide-taken-switch"></span>
             </div>
           </div>
+          <div class="filter-block">
+            <span class="filter-label">Domain hacks</span>
+            <div class="hack-grid-toggles">
+              <span class="hack-toggle" id="hack-prefix" onclick="toggleHack('prefix')">Prefixes</span>
+              <span class="hack-toggle" id="hack-suffix" onclick="toggleHack('suffix')">Suffixes</span>
+              <span class="hack-toggle" id="hack-plural" onclick="toggleHack('plural')">Pluralize</span>
+              <span class="hack-toggle" id="hack-tldhack" onclick="toggleHack('tldhack')">TLD hacks</span>
+            </div>
+            <div class="switch-row" id="hide-premium-row" onclick="toggleHidePremium()" style="margin-top: 16px;">
+              <span class="switch-label">Hide premium names</span>
+              <span class="switch" id="hide-premium-switch"></span>
+            </div>
+          </div>
           <div class="filter-block"><button class="primary" style="width: 100%; justify-content: center;" onclick="generateNames()">Regenerate</button></div>
           <div class="filter-block"><button class="secondary" style="width: 100%; justify-content: center;" onclick="nextStep(1)">Start over <i data-lucide="rotate-ccw"></i></button></div>
         </div>
       </aside>
       <main>
         <div class="results-head"><h2>Results</h2><p id="results-sub">Available names for your brief — scroll for more.</p></div>
+        <div id="hacks-section" style="display: none;">
+          <div class="hacks-head"><h3>Domain hacks</h3><p>Variations of your names, checked live.</p></div>
+          <div id="hacks-grid" class="results-grid"></div>
+        </div>
         <div id="results-grid" class="results-grid"></div>
         <div id="scroll-status" class="scroll-status"></div>
         <div id="scroll-sentinel" style="height: 1px;"></div>
@@ -421,6 +449,10 @@ export const INDEX_HTML = `<!doctype html>
     var selectedTlds = { com: true };
     var allResults = [];
     var state = { count: 12, poolCount: 30, hasMore: true, loading: false, active: false, params: null, maxLen: 99 };
+    var hacks = { prefix: false, suffix: false, plural: false, tldhack: false };
+    var hackResults = [];
+    var HACK_PREFIXES = ['get','try','go','my','the','new'];
+    var HACK_SUFFIXES = ['ly','hq','app','labs','hub','io'];
     var namePool = [];
     var poolExhausted = false;
     var refilling = false;
@@ -627,8 +659,19 @@ export const INDEX_HTML = `<!doctype html>
         '<circle class="progress-value" cx="' + (size/2) + '" cy="' + (size/2) + '" r="' + radius + '" stroke-dasharray="' + circ + '" stroke-dashoffset="' + offset + '"></circle></svg>' +
         '<span class="score-text">' + score + '</span>';
     }
+    function isPremium(d) { return !!(d && d.reason && /premium/i.test(d.reason)); }
+    function hidePremiumOn() { var s = document.getElementById('hide-premium-switch'); return !!(s && s.classList.contains('on')); }
+    // Domain rows for a card, with the hide-premium filter applied.
+    function rowsFor(item) {
+      var rows = item.domains || [];
+      if (hidePremiumOn()) rows = rows.filter(function(d){ return !isPremium(d); });
+      return rows;
+    }
     function domainRow(name, d) {
       var label = esc(d.domain);
+      if (d.pending && d.available === null) {
+        return '<div class="dom-row"><span class="dom-name">' + label + '</span><span class="dom-spacer"></span><span class="dom-status"><span class="spinner-sm"></span></span></div>';
+      }
       if (d.available === true) {
         var price = d.registrationCost ? '$' + esc(d.registrationCost) + (d.currency && d.currency !== 'USD' ? ' ' + esc(d.currency) : '') + '/yr' : 'Available';
         var on = bookmarkedDomains.has(d.domain) ? ' on' : '';
@@ -644,15 +687,26 @@ export const INDEX_HTML = `<!doctype html>
       return '<div class="dom-row"><span class="dom-name">' + label + '</span><span class="dom-spacer"></span><span class="dom-status">&mdash;</span></div>';
     }
     function isVisible(item) {
-      if (item.name.length > state.maxLen) return false;
-      if (hideTakenOn() && !(item.domains || []).some(function(d){ return d.available === true; })) return false;
+      if (!item._hack && item.name.length > state.maxLen) return false;
+      var rows = rowsFor(item);
+      if (rows.length === 0) return false;
+      // While variants are still being checked, keep the card so it can resolve.
+      var anyPending = rows.some(function(d){ return d.pending; });
+      if (hideTakenOn() && !anyPending && !rows.some(function(d){ return d.available === true; })) return false;
       return true;
     }
     function cardHtml(item) {
+      var rows = rowsFor(item).map(function(d){ return domainRow(item.name, d); }).join('');
+      if (item._hack) {
+        return '<div class="result-card hack-card" data-hidx="' + item._idx + '">' +
+          '<div class="card-header"><div><h3 class="card-title">' + esc(item.name) + '</h3></div>' +
+          '<span class="hack-badge">' + esc(item.hack) + '</span></div>' +
+          '<div class="domain-list">' + rows + '</div></div>';
+      }
       return '<div class="result-card"><div class="card-header"><div><h3 class="card-title">' + esc(item.name) + '</h3></div>' +
         '<div class="circular-progress">' + renderProgressCircle(item.score) + '</div></div>' +
         '<div class="card-meta">' + esc(item.displayName) + '</div>' +
-        '<div class="domain-list">' + (item.domains || []).map(function(d){ return domainRow(item.name, d); }).join('') + '</div>' +
+        '<div class="domain-list">' + rows + '</div>' +
         '<div class="card-foot"><i data-lucide="smartphone"></i> App Store: <b>' + (item.appStoreCount || 0) + '</b> results</div></div>';
     }
     function reRender() {
@@ -664,6 +718,120 @@ export const INDEX_HTML = `<!doctype html>
       }
       lucide.createIcons();
     }
+
+    // ---------- domain hacks ----------
+    function pluralizeName(n) { return /(s|x|z|ch|sh)$/.test(n) ? n + 'es' : n + 's'; }
+    function toggleHack(type) {
+      hacks[type] = !hacks[type];
+      var chip = document.getElementById('hack-' + type);
+      if (chip) chip.classList.toggle('on', hacks[type]);
+      rebuildHacks();
+    }
+    function toggleHidePremium() {
+      document.getElementById('hide-premium-switch').classList.toggle('on');
+      reRender();
+      renderHacks();
+    }
+    function resetHacks() {
+      hacks = { prefix: false, suffix: false, plural: false, tldhack: false };
+      hackResults = [];
+      ['prefix','suffix','plural','tldhack'].forEach(function(t){ var c = document.getElementById('hack-' + t); if (c) c.classList.remove('on'); });
+      var sec = document.getElementById('hacks-section'); if (sec) sec.style.display = 'none';
+      var g = document.getElementById('hacks-grid'); if (g) g.innerHTML = '';
+    }
+    // Generate variant names from the current results and queue them for a live check.
+    function rebuildHacks() {
+      var anyOn = hacks.prefix || hacks.suffix || hacks.plural || hacks.tldhack;
+      var sec = document.getElementById('hacks-section');
+      if (!anyOn) { hackResults = []; if (sec) sec.style.display = 'none'; document.getElementById('hacks-grid').innerHTML = ''; return; }
+      var tlds = getSelectedTlds();
+      var seen = {};
+      allResults.forEach(function(r){ seen[r.name.toLowerCase()] = 1; });
+      var bases = allResults.slice(0, 10).map(function(r){ return r.name.toLowerCase().replace(/[^a-z0-9]/g, ''); }).filter(function(b){ return b.length >= 2; });
+      var items = [];
+      function addVariant(vname, label) {
+        vname = String(vname).toLowerCase().replace(/[^a-z0-9-]/g, '');
+        if (vname.length < 2 || seen[vname]) return;
+        seen[vname] = 1;
+        items.push({ _hack: true, hack: label, name: vname, domains: tlds.map(function(t){ return { domain: vname + '.' + t, tld: t, available: null, pending: true }; }) });
+      }
+      bases.forEach(function(bn){
+        if (hacks.prefix) HACK_PREFIXES.forEach(function(p){ addVariant(p + bn, 'prefix'); });
+        if (hacks.suffix) HACK_SUFFIXES.forEach(function(s){ addVariant(bn + s, 'suffix'); });
+        if (hacks.plural) addVariant(pluralizeName(bn), 'plural');
+        if (hacks.tldhack) TLDS.forEach(function(t){
+          if (bn.length > t.length + 1 && bn.slice(-t.length) === t) {
+            var dom = bn.slice(0, bn.length - t.length) + '.' + t;
+            if (!seen[dom]) { seen[dom] = 1; items.push({ _hack: true, hack: 'hack', name: dom, domains: [{ domain: dom, tld: t, available: null, pending: true }] }); }
+          }
+        });
+      });
+      hackResults = items.slice(0, 40);
+      if (sec) sec.style.display = '';
+      renderHacks();
+    }
+    function renderHacks() {
+      var grid = document.getElementById('hacks-grid');
+      if (!grid) return;
+      var visible = [];
+      hackResults.forEach(function(it, i){ it._idx = i; if (isVisible(it)) visible.push(it); });
+      grid.innerHTML = visible.map(cardHtml).join('');
+      lucide.createIcons();
+      observeHackCards();
+    }
+    var hackQueue = [], hackTimer = null;
+    var hackObserver = new IntersectionObserver(function(entries){
+      var idxs = [];
+      entries.forEach(function(e){ if (e.isIntersecting) { hackObserver.unobserve(e.target); var i = parseInt(e.target.getAttribute('data-hidx'), 10); if (!isNaN(i)) idxs.push(i); } });
+      if (idxs.length) checkHackIdxs(idxs);
+    }, { rootMargin: '300px' });
+    function observeHackCards() {
+      document.querySelectorAll('#hacks-grid .hack-card').forEach(function(el){
+        var i = parseInt(el.getAttribute('data-hidx'), 10);
+        var it = hackResults[i];
+        if (it && it.domains.some(function(d){ return d.pending && !d.checking; })) hackObserver.observe(el);
+      });
+    }
+    function checkHackIdxs(idxs) {
+      idxs.forEach(function(idx){
+        var it = hackResults[idx];
+        if (!it) return;
+        it.domains.forEach(function(d){ if (d.pending && !d.checking) { d.checking = true; hackQueue.push(d.domain); } });
+      });
+      clearTimeout(hackTimer);
+      hackTimer = setTimeout(flushHackCheck, 140);
+    }
+    async function flushHackCheck() {
+      var domains = hackQueue.splice(0, 80);
+      if (!domains.length) return;
+      try {
+        var res = await fetch('/api/hacks/check', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ domains: domains }) });
+        if (res.status === 401) { showAuth(); return; }
+        var data = await res.json();
+        var byDom = {};
+        (data.results || []).forEach(function(info){ byDom[info.domain] = info; });
+        hackResults.forEach(function(it){ it.domains.forEach(function(d){
+          var info = byDom[d.domain];
+          if (info) { d.available = info.available; d.registrationCost = info.registrationCost; d.renewalCost = info.renewalCost; d.currency = info.currency; d.reason = info.reason; d.purchaseUrl = info.purchaseUrl || PURCHASE_URL; d.pending = false; d.checking = false; }
+        }); });
+      } catch (e) {
+        var set = {}; domains.forEach(function(x){ set[x] = 1; });
+        hackResults.forEach(function(it){ it.domains.forEach(function(d){ if (set[d.domain]) { d.pending = false; d.checking = false; } }); });
+      }
+      // Refresh every hack card in place from current state (robust if a batch was split).
+      document.querySelectorAll('#hacks-grid .hack-card').forEach(function(card){
+        var i = parseInt(card.getAttribute('data-hidx'), 10);
+        var it = hackResults[i];
+        if (!it) return;
+        if (!isVisible(it)) { card.style.display = 'none'; return; }
+        card.style.display = '';
+        var list = card.querySelector('.domain-list');
+        if (list) list.innerHTML = rowsFor(it).map(function(d){ return domainRow(it.name, d); }).join('');
+      });
+      lucide.createIcons();
+      if (hackQueue.length) { clearTimeout(hackTimer); hackTimer = setTimeout(flushHackCheck, 140); }
+    }
+
     function getParams() {
       return { brief: document.getElementById('brief').value, industry: document.getElementById('industry').value, avoid: document.getElementById('avoid').value, seeds: document.getElementById('seeds').value, tlds: getSelectedTlds() };
     }
@@ -698,6 +866,7 @@ export const INDEX_HTML = `<!doctype html>
       document.querySelectorAll('.wizard-step').forEach(function(s){ s.classList.remove('active'); });
       document.getElementById('dashboard').classList.add('active');
       allResults = []; namePool = []; poolExhausted = false; refilling = false;
+      resetHacks();
       document.getElementById('results-grid').innerHTML = '';
       state.hasMore = true; state.loading = false; state.active = true; state.params = getParams();
       onLengthChange();
