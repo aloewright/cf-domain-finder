@@ -602,6 +602,35 @@ async function handleNames(request: Request, env: Env) {
   return json({ names });
 }
 
+// A short, evocative one-liner per name tying it to the brief — fills the card subtitle.
+// One batched model call; on any failure each card just falls back to no subtitle.
+async function generateTaglines(names: string[], context: NamingContext, env: Env): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (names.length === 0) return map;
+  const focus = context.brief || context.industry || "a modern product";
+  const prompt = [
+    `Brief: ${focus}`,
+    context.keywords.length ? `Keywords: ${context.keywords.join(", ")}` : "",
+    "",
+    'For each product name below, write a punchy 3-7 word rationale tying it to the brief — its vibe or meaning, not a full sentence. Output exactly one line per name in the form "Name | rationale", nothing else.',
+    "",
+    names.join(", ")
+  ].filter(Boolean).join("\n");
+  try {
+    const text = await gatewayText(env, "You write crisp, evocative product-name taglines.", prompt, { timeoutMs: 9000, maxOutputTokens: 380 });
+    for (const line of text.split("\n")) {
+      const bar = line.indexOf("|");
+      if (bar < 0) continue;
+      const nm = line.slice(0, bar).replace(/^[\s*\d.)-]+/, "").trim().toLowerCase();
+      const tag = line.slice(bar + 1).replace(/^[\s"'-]+/, "").replace(/[\s"']+$/, "");
+      if (nm && tag && tag.length <= 80) map.set(nm, tag);
+    }
+  } catch {
+    // No taglines — cards render without a subtitle.
+  }
+  return map;
+}
+
 async function handleEnrich(request: Request, env: Env) {
   const userId = await requireUser(request, env);
   if (!userId) return json({ error: "Authentication required" }, { status: 401 });
@@ -616,9 +645,10 @@ async function handleEnrich(request: Request, env: Env) {
 
   const context = buildContext(body);
   const tlds = parseTlds(body.tlds);
-  const [appStores, domainMap] = await Promise.all([
+  const [appStores, domainMap, taglines] = await Promise.all([
     Promise.all(names.map((name) => checkAppStore(name))),
-    checkDomains(names, tlds, env)
+    checkDomains(names, tlds, env),
+    generateTaglines(names, context, env)
   ]);
 
   const results = names.map((name, index) => {
@@ -626,12 +656,14 @@ async function handleEnrich(request: Request, env: Env) {
     const domains = domainMap.get(name.toLowerCase()) ?? [];
     return {
       name,
-      displayName: `${name} — Private AI`,
+      displayName: taglines.get(name.toLowerCase()) ?? "",
       score: cardScore(name, appStoreCount, domains, context),
       appStoreCount,
       domains
     };
   });
+  // Best-first within the batch so the strongest names lead each page.
+  results.sort((a, b) => b.score - a.score);
   return json({ results });
 }
 

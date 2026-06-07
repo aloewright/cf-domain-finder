@@ -170,6 +170,9 @@ export const INDEX_HTML = `<!doctype html>
     .dom-row.dom-taken .dom-name { color: var(--muted); }
     .dom-row.dom-taken .dom-status { color: var(--bad); }
     .dom-row.dom-avail { background: rgba(142, 240, 180, 0.08); }
+    .dom-row.dom-taken { opacity: 0.6; }
+    .dom-row.dom-premium { opacity: 0.78; background: rgba(255,255,255,0.03); }
+    .dom-tag { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 1px 6px; }
     .dom-price { color: var(--good); font-weight: 800; }
     .dom-buy { display: inline-flex; align-items: center; gap: 4px; background: var(--good); color: #07210f; padding: 6px 12px; border-radius: var(--r-pill); font-size: 12px; font-weight: 900; text-decoration: none; transition: transform 0.15s ease; }
     .dom-buy:hover { transform: translateY(-1px); }
@@ -351,9 +354,9 @@ export const INDEX_HTML = `<!doctype html>
         <div class="filter-card">
           <h3>Refine</h3>
           <div class="filter-block">
-            <span class="filter-label">Name length</span>
-            <input type="range" id="length-range" min="1" max="3" step="1" value="3" oninput="onLengthChange()" />
-            <div class="range-labels"><span>Short</span><span>Medium</span><span>Long</span></div>
+            <span class="filter-label">Max name length: <b id="length-val">Any</b></span>
+            <input type="range" id="length-range" min="4" max="20" step="1" value="20" oninput="onLengthChange()" />
+            <div class="range-labels"><span>4</span><span>20+</span></div>
           </div>
           <div class="filter-block">
             <span class="filter-label">Top-level domains</span>
@@ -647,7 +650,13 @@ export const INDEX_HTML = `<!doctype html>
     function getSelectedTlds() { var out = TLDS.filter(function(t){ return selectedTlds[t]; }); return out.length ? out : ['com']; }
     function toggleHideTaken() { document.getElementById('hide-taken-switch').classList.toggle('on'); reRender(); }
     function hideTakenOn() { return document.getElementById('hide-taken-switch').classList.contains('on'); }
-    function onLengthChange() { var v = parseInt(document.getElementById('length-range').value, 10); state.maxLen = v === 1 ? 8 : v === 2 ? 12 : 99; reRender(); }
+    function onLengthChange() {
+      var v = parseInt(document.getElementById('length-range').value, 10);
+      state.maxLen = v >= 20 ? 99 : v;
+      var lbl = document.getElementById('length-val');
+      if (lbl) lbl.textContent = v >= 20 ? 'Any' : ('≤ ' + v);
+      reRender(); renderHacks();
+    }
 
     // ---------- results rendering ----------
     function renderProgressCircle(score, size) {
@@ -673,11 +682,14 @@ export const INDEX_HTML = `<!doctype html>
         return '<div class="dom-row"><span class="dom-name">' + label + '</span><span class="dom-spacer"></span><span class="dom-status"><span class="spinner-sm"></span></span></div>';
       }
       if (d.available === true) {
+        var prem = isPremium(d);
         var price = d.registrationCost ? '$' + esc(d.registrationCost) + (d.currency && d.currency !== 'USD' ? ' ' + esc(d.currency) : '') + '/yr' : 'Available';
         var on = bookmarkedDomains.has(d.domain) ? ' on' : '';
-        return '<div class="dom-row dom-avail">' +
+        return '<div class="dom-row dom-avail' + (prem ? ' dom-premium' : '') + '">' +
           '<button class="bm' + on + '" data-name="' + esc(name) + '" data-domain="' + label + '" data-price="' + esc(d.registrationCost || '') + '" data-currency="' + esc(d.currency || '') + '" onclick="toggleBookmark(this)"><i data-lucide="bookmark"></i></button>' +
-          '<span class="dom-name">' + label + '</span><span class="dom-spacer"></span>' +
+          '<span class="dom-name">' + label + '</span>' +
+          (prem ? '<span class="dom-tag">premium</span>' : '') +
+          '<span class="dom-spacer"></span>' +
           '<span class="dom-price">' + price + '</span>' +
           '<a class="dom-buy" href="' + esc(d.purchaseUrl) + '" target="_blank" rel="noreferrer">Buy <i data-lucide="arrow-up-right"></i></a></div>';
       }
@@ -695,27 +707,45 @@ export const INDEX_HTML = `<!doctype html>
       if (hideTakenOn() && !anyPending && !rows.some(function(d){ return d.available === true; })) return false;
       return true;
     }
+    // Order domain rows available-first (non-premium, then premium), then pending, then taken.
+    function domSortRank(d) {
+      if (d.available === true) return isPremium(d) ? 1 : 0;
+      if (d.pending && d.available === null) return 2;
+      if (d.available === null) return 3;
+      return 4;
+    }
     function cardHtml(item) {
-      var rows = rowsFor(item).map(function(d){ return domainRow(item.name, d); }).join('');
+      var rows = rowsFor(item).slice().sort(function(a, b){ return domSortRank(a) - domSortRank(b); })
+        .map(function(d){ return domainRow(item.name, d); }).join('');
       if (item._hack) {
         return '<div class="result-card hack-card" data-hidx="' + item._idx + '">' +
           '<div class="card-header"><div><h3 class="card-title">' + esc(item.name) + '</h3></div>' +
           '<span class="hack-badge">' + esc(item.hack) + '</span></div>' +
           '<div class="domain-list">' + rows + '</div></div>';
       }
+      var meta = item.displayName ? '<div class="card-meta">' + esc(item.displayName) + '</div>' : '';
       return '<div class="result-card"><div class="card-header"><div><h3 class="card-title">' + esc(item.name) + '</h3></div>' +
         '<div class="circular-progress">' + renderProgressCircle(item.score) + '</div></div>' +
-        '<div class="card-meta">' + esc(item.displayName) + '</div>' +
+        meta +
         '<div class="domain-list">' + rows + '</div>' +
         '<div class="card-foot"><i data-lucide="smartphone"></i> App Store: <b>' + (item.appStoreCount || 0) + '</b> results</div></div>';
+    }
+    // How well a name fits the current filters — used to pick the closest names when an
+    // exact-match set would be empty (so the grid never dead-ends on "no results").
+    function fitRank(item) {
+      var r = item.score || 0;
+      if (item.name.length <= state.maxLen) r += 1000;
+      if (rowsFor(item).some(function(d){ return d.available === true; })) r += 400;
+      return r;
     }
     function reRender() {
       var grid = document.getElementById('results-grid');
       var visible = allResults.filter(isVisible);
-      grid.innerHTML = visible.map(cardHtml).join('');
-      if (state.active && !state.loading && allResults.length > 0 && visible.length === 0 && !state.hasMore) {
-        grid.innerHTML = '<div class="scroll-status">No matching names. Try different TLDs or filters.</div>';
+      // Never respond with no results: if filters hide everything, show the closest names.
+      if (visible.length === 0 && allResults.length > 0) {
+        visible = allResults.slice().sort(function(a, b){ return fitRank(b) - fitRank(a); });
       }
+      grid.innerHTML = visible.map(cardHtml).join('');
       lucide.createIcons();
     }
 
@@ -896,8 +926,7 @@ export const INDEX_HTML = `<!doctype html>
         var data = await res.json();
         var enriched = data.results || [];
         allResults = allResults.concat(enriched);
-        document.getElementById('results-grid').insertAdjacentHTML('beforeend', enriched.filter(isVisible).map(cardHtml).join(''));
-        lucide.createIcons();
+        reRender();
         state.hasMore = !(poolExhausted && namePool.length === 0);
         status.textContent = state.hasMore ? '' : "That's all for this brief — try Regenerate or new seeds.";
         // Prefetch the next pool in the background so scrolling stays instant.
