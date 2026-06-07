@@ -1,0 +1,278 @@
+# Instincts generated from https://github.com/aloewright/cf-domain-finder
+# Generated: 2026-06-07T04:06:38.425Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: cf-domain-finder-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/aloewright/cf-domain-finder
+---
+
+# Cf Domain Finder Commit Length
+
+## Action
+
+Write moderate-length commit messages (~53 characters)
+
+## Evidence
+
+- Average commit message length: 53 chars
+- Based on 1 commits
+
+---
+id: cf-domain-finder-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/aloewright/cf-domain-finder
+---
+
+# Cf Domain Finder Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: cf-domain-finder-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/aloewright/cf-domain-finder
+---
+
+# Cf Domain Finder Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: cf-domain-finder-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/aloewright/cf-domain-finder
+---
+
+# Cf Domain Finder Export Style
+
+## Action
+
+Prefer mixed exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: mixed
+
+---
+id: cf-domain-finder-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/aloewright/cf-domain-finder
+---
+
+# Cf Domain Finder Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: cf-domain-finder-instinct-file-naming
+trigger: "When creating a new file"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: aloewright/cf-domain-finder
+---
+
+# Cf Domain Finder Instinct File Naming
+
+## Action
+
+Name the file using camelCase
+
+## Evidence
+
+- Pattern in namingConventions.files
+
+---
+id: cf-domain-finder-instinct-function-naming
+trigger: "When defining a new function"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: aloewright/cf-domain-finder
+---
+
+# Cf Domain Finder Instinct Function Naming
+
+## Action
+
+Name the function using camelCase
+
+## Evidence
+
+- Pattern in namingConventions.functions
+
+---
+id: cf-domain-finder-instinct-class-naming
+trigger: "When defining a new class"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: aloewright/cf-domain-finder
+---
+
+# Cf Domain Finder Instinct Class Naming
+
+## Action
+
+Name the class using PascalCase
+
+## Evidence
+
+- Pattern in namingConventions.classes
+
+---
+id: cf-domain-finder-instinct-constant-naming
+trigger: "When declaring a constant"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: aloewright/cf-domain-finder
+---
+
+# Cf Domain Finder Instinct Constant Naming
+
+## Action
+
+Name the constant using SCREAMING_SNAKE_CASE
+
+## Evidence
+
+- Pattern in namingConventions.constants
+
+---
+id: cf-domain-finder-instinct-import-style
+trigger: "When importing modules"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: aloewright/cf-domain-finder
+---
+
+# Cf Domain Finder Instinct Import Style
+
+## Action
+
+Use relative import paths
+
+## Evidence
+
+- Pattern in importStyle
+
+---
+id: cf-domain-finder-instinct-export-style
+trigger: "When exporting modules or functions"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: aloewright/cf-domain-finder
+---
+
+# Cf Domain Finder Instinct Export Style
+
+## Action
+
+Use either named or default exports as appropriate (mixed style)
+
+## Evidence
+
+- Pattern in exportStyle
+
+---
+id: cf-domain-finder-instinct-try-catch-errors
+trigger: "When handling potential errors in code"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: aloewright/cf-domain-finder
+---
+
+# Cf Domain Finder Instinct Try Catch Errors
+
+## Action
+
+Use try-catch blocks for error handling
+
+## Evidence
+
+- Pattern in errorHandling.style
+
+---
+id: cf-domain-finder-instinct-test-location
+trigger: "When adding new tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: aloewright/cf-domain-finder
+---
+
+# Cf Domain Finder Instinct Test Location
+
+## Action
+
+Place test files in a separate folder from source code
+
+## Evidence
+
+- Pattern in architecture.testLocation
+
+---
+id: cf-domain-finder-instinct-commit-format
+trigger: "When writing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: aloewright/cf-domain-finder
+---
+
+# Cf Domain Finder Instinct Commit Format
+
+## Action
+
+Write a freeform message without a required prefix, averaging around 50 characters
+
+## Evidence
+
+- Pattern in commits.type
+- Example: 'Migrate domain chat agent to TanStack AI + Workers AI'
+
