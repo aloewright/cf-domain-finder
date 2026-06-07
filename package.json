@@ -22,5 +22,8 @@
   "dependencies": {
     "@cloudflare/tanstack-ai": "^0.1.9",
     "@tanstack/ai": "^0.28.0"
+  },
+  "overrides": {
+    "@anthropic-ai/sdk": "0.97.1"
   }
 }
