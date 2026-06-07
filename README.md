@@ -1,10 +1,10 @@
 <a href="https://blabout.com"><img src="assets/banner.svg" alt="blabout — find available domains on Cloudflare" width="100%"></a>
 
 <p>
-  <a href="https://blabout.com"><img alt="Live demo" src="https://img.shields.io/badge/Live%20demo-blabout.com-8be8ee?style=flat-square&logo=cloudflare&logoColor=0d0e10&labelColor=22242a"></a>
-  <a href="https://blabout.com"><img alt="Cloudflare Workers" src="https://img.shields.io/badge/Cloudflare-Workers-F38020?style=flat-square&logo=cloudflare&logoColor=white&labelColor=22242a"></a>
-  <a href="https://blabout.com"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white&labelColor=22242a"></a>
-  <img alt="License: ISC" src="https://img.shields.io/badge/License-ISC-blue?style=flat-square&labelColor=22242a">
+  <a href="https://blabout.com"><img alt="Live demo" src="https://img.shields.io/badge/Live%20demo-blabout.com-00b0c0?style=flat-square&logo=cloudflare&logoColor=white&labelColor=555"></a>
+  <a href="https://blabout.com"><img alt="Cloudflare Workers" src="https://img.shields.io/badge/Cloudflare-Workers-F38020?style=flat-square&logo=cloudflare&logoColor=white&labelColor=555"></a>
+  <a href="https://blabout.com"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white&labelColor=555"></a>
+  <img alt="License: ISC" src="https://img.shields.io/badge/License-ISC-blue?style=flat-square&labelColor=555">
 </p>
 
 # Cloudflare Domain Finder
