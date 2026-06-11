@@ -807,12 +807,15 @@ export const INDEX_HTML = `<!doctype html>
       var feedback = '<div class="feedback-actions"><span>Tune</span>' +
         '<button class="fb-btn ' + (fb === 'closer' ? 'on' : '') + '" data-name="' + esc(item.name) + '" data-feedback="closer" onclick="rateName(this)" title="Closer to what I want" aria-label="Mark ' + esc(item.name) + ' closer"><i data-lucide="thumbs-up"></i></button>' +
         '<button class="fb-btn ' + (fb === 'further' ? 'on' : '') + '" data-name="' + esc(item.name) + '" data-feedback="further" onclick="rateName(this)" title="Further from what I want" aria-label="Mark ' + esc(item.name) + ' further"><i data-lucide="thumbs-down"></i></button></div>';
+      var gh = '';
+      if (item.github === true) gh = '<span class="foot-sep">&middot;</span><i data-lucide="at-sign"></i> GitHub: <b>free</b>';
+      else if (item.github === false) gh = '<span class="foot-sep">&middot;</span><i data-lucide="at-sign"></i> GitHub: taken';
       return '<div class="result-card"><div class="card-header"><div><h3 class="card-title">' + esc(item.name) + '</h3></div>' +
         '<div class="circular-progress">' + renderProgressCircle(item.score) + '</div></div>' +
         meta +
         '<div class="domain-list">' + rows + '</div>' +
         feedback +
-        '<div class="card-foot"><i data-lucide="smartphone"></i> App Store: <b>' + (item.appStoreCount || 0) + '</b> results</div></div>';
+        '<div class="card-foot"><i data-lucide="smartphone"></i> App Store: <b>' + (item.appStoreCount || 0) + '</b>' + gh + '</div></div>';
     }
     // How well a name fits the current filters — used to pick the closest names when an
     // exact-match set would be empty (so the grid never dead-ends on "no results").

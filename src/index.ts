@@ -718,33 +718,70 @@ async function handleNames(request: Request, env: Env) {
   return json({ names });
 }
 
-// A short, evocative one-liner per name tying it to the brief — fills the card subtitle.
-// One batched model call; on any failure each card just falls back to no subtitle.
-async function generateTaglines(names: string[], context: NamingContext, env: Env): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+// A short, evocative one-liner per name tying it to the brief (fills the card subtitle),
+// plus a 0-100 brief-fit rating that handleEnrich blends into the card score — so the
+// score ring reflects relevance to the brief, not just availability mechanics. One batched
+// model call; on any failure each card just falls back to no subtitle and the base score.
+type NameInsight = { tagline: string; fit: number | null };
+
+async function generateInsights(names: string[], context: NamingContext, env: Env): Promise<Map<string, NameInsight>> {
+  const map = new Map<string, NameInsight>();
   if (names.length === 0) return map;
   const focus = context.brief || context.industry || "a modern product";
   const prompt = [
     `Brief: ${focus}`,
     context.keywords.length ? `Keywords: ${context.keywords.join(", ")}` : "",
     "",
-    'For each product name below, write a punchy 3-7 word rationale tying it to the brief — its vibe or meaning, not a full sentence. Output exactly one line per name in the form "Name | rationale", nothing else.',
+    'For each product name below: write a punchy 3-7 word rationale tying it to the brief (its vibe or meaning, not a full sentence), then rate 0-100 how well the name fits the brief — meaning, sound, and audience; be honest, spread the ratings. Output exactly one line per name in the form "Name | rationale | NN", nothing else.',
     "",
     names.join(", ")
   ].filter(Boolean).join("\n");
+  const system = "You judge and describe product names crisply and honestly.";
+  let text = "";
   try {
-    const text = await gatewayText(env, "You write crisp, evocative product-name taglines.", prompt, { timeoutMs: 9000, maxOutputTokens: 380 });
-    for (const line of text.split("\n")) {
-      const bar = line.indexOf("|");
-      if (bar < 0) continue;
-      const nm = line.slice(0, bar).replace(/^[\s*\d.)-]+/, "").trim().toLowerCase();
-      const tag = line.slice(bar + 1).replace(/^[\s"'-]+/, "").replace(/[\s"']+$/, "");
-      if (nm && tag && tag.length <= 80) map.set(nm, tag);
-    }
+    text = await namerText(env, system, prompt, 8000);
   } catch {
-    // No taglines — cards render without a subtitle.
+    text = "";
+  }
+  if (!text.trim()) {
+    try {
+      text = await gatewayText(env, system, prompt, { timeoutMs: 9000, maxOutputTokens: 420 });
+    } catch {
+      return map;
+    }
+  }
+  for (const line of text.split("\n")) {
+    const parts = line.split("|");
+    if (parts.length < 2) continue;
+    const nm = parts[0].replace(/^[\s*\d.)-]+/, "").trim().toLowerCase();
+    const tag = parts[1].trim().replace(/^["'-]+/, "").replace(/["']+$/, "");
+    let fit: number | null = null;
+    if (parts.length >= 3) {
+      const rating = parseInt(parts[parts.length - 1].replace(/[^0-9]/g, ""), 10);
+      if (Number.isFinite(rating) && rating >= 0 && rating <= 100) fit = rating;
+    }
+    if (nm && tag && tag.length <= 80) map.set(nm, { tagline: tag, fit });
   }
   return map;
+}
+
+// GitHub is the one social platform whose handle availability is checkable without
+// credentials: profile URLs 404 when the handle is free. X/Instagram bot-wall anonymous
+// checks, so they're deliberately not attempted. null = couldn't determine.
+async function checkGithub(name: string): Promise<boolean | null> {
+  try {
+    const response = await fetch(`https://github.com/${name.toLowerCase()}`, {
+      method: "HEAD",
+      headers: { "user-agent": "copythe.link handle check" },
+      redirect: "manual",
+      signal: AbortSignal.timeout(5000)
+    });
+    if (response.status === 404) return true;
+    if (response.status === 200) return false;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 async function handleEnrich(request: Request, env: Env) {
@@ -761,20 +798,27 @@ async function handleEnrich(request: Request, env: Env) {
 
   const context = buildContext(body);
   const tlds = parseTlds(body.tlds);
-  const [appStores, domainMap, taglines] = await Promise.all([
+  const [appStores, domainMap, insights, githubs] = await Promise.all([
     Promise.all(names.map((name) => checkAppStore(name))),
     checkDomains(names, tlds, env),
-    generateTaglines(names, context, env)
+    generateInsights(names, context, env),
+    Promise.all(names.map((name) => checkGithub(name)))
   ]);
 
   const results = names.map((name, index) => {
     const appStoreCount = appStores[index].resultCount;
     const domains = domainMap.get(name.toLowerCase()) ?? [];
+    const insight = insights.get(name.toLowerCase());
+    const base = cardScore(name, appStoreCount, domains, context);
+    // Blend in the model's brief-fit rating so the ring rewards relevance, not just
+    // availability mechanics; base score still dominates.
+    const score = insight?.fit != null ? Math.round(base * 0.7 + insight.fit * 0.3) : base;
     return {
       name,
-      displayName: taglines.get(name.toLowerCase()) ?? "",
-      score: cardScore(name, appStoreCount, domains, context),
+      displayName: insight?.tagline ?? "",
+      score,
       appStoreCount,
+      github: githubs[index],
       domains
     };
   });
