@@ -38,7 +38,9 @@ type DomainInfo = {
 };
 
 type CandidateResult = {
-  appStore: { exact: AppHit[]; close: AppHit[]; resultCount: number };
+  // resultCount null = the check failed or was skipped (timeout, throttle, lite mode) —
+  // deliberately distinct from a real 0, which is a strong positive signal.
+  appStore: { exact: AppHit[]; close: AppHit[]; resultCount: number | null };
   web: { checked: boolean; hits: WebHit[] };
 };
 
@@ -220,7 +222,7 @@ function generateCandidates(context: NamingContext, seedsInput: unknown) {
 }
 
 async function checkAppStore(name: string): Promise<CandidateResult["appStore"]> {
-  const empty: CandidateResult["appStore"] = { exact: [], close: [], resultCount: 0 };
+  const empty: CandidateResult["appStore"] = { exact: [], close: [], resultCount: null };
   const url = new URL("https://itunes.apple.com/search");
   url.searchParams.set("term", name);
   url.searchParams.set("country", "US");
@@ -277,9 +279,12 @@ async function checkWeb(name: string, env: Env): Promise<CandidateResult["web"]>
 }
 
 // A meaningful 2-100 composite weighted on App Store crowdedness + real domain availability.
-function cardScore(name: string, appStoreCount: number, domains: DomainInfo[], context: NamingContext) {
+function cardScore(name: string, appStoreCount: number | null, domains: DomainInfo[], context: NamingContext) {
   let score = 58;
-  if (appStoreCount === 0) score += 18;
+  // null = check failed/skipped: no signal, no bonus — a throttled iTunes API must not
+  // make every name in the batch look collision-free.
+  if (appStoreCount === null) { /* neutral */ }
+  else if (appStoreCount === 0) score += 18;
   else if (appStoreCount <= 5) score += 10;
   else if (appStoreCount <= 12) score += 2;
   else if (appStoreCount <= 20) score -= 8;
@@ -606,7 +611,10 @@ function synthNames(context: NamingContext, exclude: string[], count: number): s
   const sizes = [SYNTH_VOWELS.length, SYNTH_ONSETS.length, SYNTH_VOWELS.length, SYNTH_ENDS.length];
   const total = SYNTH_ONSETS.length * sizes[0] * sizes[1] * sizes[2] * sizes[3];
   const stride = 104729; // prime, coprime with total — visits every combo exactly once
-  for (let i = 0; i < total && out.length < count; i++) {
+  // 50k combos is far more than any real call consumes; the cap bounds worst-case CPU
+  // when nearly the whole space is excluded.
+  const maxProbes = Math.min(total, 50000);
+  for (let i = 0; i < maxProbes && out.length < count; i++) {
     let k = (i * stride) % total;
     const end = SYNTH_ENDS[k % SYNTH_ENDS.length]; k = Math.floor(k / SYNTH_ENDS.length);
     const v2 = SYNTH_VOWELS[k % SYNTH_VOWELS.length]; k = Math.floor(k / SYNTH_VOWELS.length);
@@ -683,7 +691,9 @@ async function generateAiNames(
     // times out, or returns nothing usable.
     let text = "";
     try {
-      text = await namerText(env, system, lines.join("\n"), 16000);
+      // 10s, not the model's worst case: the Llama fallback below is decent, and the two
+      // timeouts stack sequentially — this bounds the tail at ~23s instead of ~29s.
+      text = await namerText(env, system, lines.join("\n"), 10000);
     } catch {
       text = "";
     }
@@ -838,13 +848,15 @@ async function generateInsights(names: string[], context: NamingContext, env: En
   const system = "You judge and describe product names crisply and honestly.";
   let text = "";
   try {
-    text = await namerText(env, system, prompt, 8000);
+    text = await namerText(env, system, prompt, 6000);
   } catch {
     text = "";
   }
   if (!text.trim()) {
     try {
-      text = await gatewayText(env, system, prompt, { timeoutMs: 9000, maxOutputTokens: 420 });
+      // 800 tokens, not 420: 24 names × "Name | rationale | NN | style" needs ~550+, and a
+      // truncated tail silently drops taglines, styles, and the fit term from those scores.
+      text = await gatewayText(env, system, prompt, { timeoutMs: 9000, maxOutputTokens: 800 });
     } catch {
       return map;
     }
@@ -896,23 +908,33 @@ async function handleEnrich(request: Request, env: Env) {
 
   const body = (await request.json().catch(() => ({}))) as {
     names?: unknown; tlds?: unknown; brief?: string; industry?: string; avoid?: string; maxLen?: unknown;
+    lite?: unknown;
   };
   const names = Array.isArray(body.names)
     ? body.names.map((n) => String(n)).filter(Boolean).slice(0, 24)
     : [];
   if (names.length === 0) return json({ results: [] });
 
+  // Lite mode: the client's auto-deepen can chain several pages in seconds; skipping the
+  // per-name iTunes and GitHub fan-out there avoids hammering rate-limited third parties
+  // (which would corrupt scores — see cardScore's null handling) while keeping the parts
+  // deepening actually needs: domain availability, taglines, fit.
+  const lite = body.lite === true;
   const context = buildContext(body);
   const tlds = parseTlds(body.tlds);
-  const [appStores, domainMap, insights, githubs] = await Promise.all([
-    Promise.all(names.map((name) => checkAppStore(name))),
+  const [appCounts, domainMap, insights, githubs] = await Promise.all([
+    lite
+      ? Promise.resolve(names.map(() => null as number | null))
+      : Promise.all(names.map(async (name) => (await checkAppStore(name)).resultCount)),
     checkDomains(names, tlds, env),
     generateInsights(names, context, env),
-    Promise.all(names.map((name) => checkGithub(name)))
+    lite
+      ? Promise.resolve(names.map(() => null as boolean | null))
+      : Promise.all(names.map((name) => checkGithub(name)))
   ]);
 
   const results = names.map((name, index) => {
-    const appStoreCount = appStores[index].resultCount;
+    const appStoreCount = appCounts[index];
     const domains = domainMap.get(name.toLowerCase()) ?? [];
     const insight = insights.get(name.toLowerCase());
     const base = cardScore(name, appStoreCount, domains, context);

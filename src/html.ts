@@ -4,7 +4,7 @@ export const INDEX_HTML = `<!doctype html>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>copythe.link</title>
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://unpkg.com/lucide@1.17.0/dist/umd/lucide.min.js"></script>
   <style>
     @font-face {
       font-family: 'Nunito';
@@ -926,7 +926,7 @@ export const INDEX_HTML = `<!doctype html>
         '<div class="card-foot">' +
         '<button class="say-btn" data-name="' + esc(item.name) + '" onclick="sayName(this.dataset.name)" title="Hear it spoken" aria-label="Pronounce ' + esc(item.name) + '"><i data-lucide="volume-2"></i></button>' +
         sylCount(item.name) + ' syl' +
-        '<span class="foot-sep">&middot;</span><i data-lucide="smartphone"></i> App Store: <b>' + (item.appStoreCount || 0) + '</b>' + gh +
+        '<span class="foot-sep">&middot;</span><i data-lucide="smartphone"></i> App Store: <b>' + (item.appStoreCount == null ? '&mdash;' : item.appStoreCount) + '</b>' + gh +
         '<span class="foot-sep">&middot;</span><a class="tm-link" href="' + tmHref + '" target="_blank" rel="noopener noreferrer" title="Screen for trademark conflicts">TM <i data-lucide="external-link"></i></a>' +
         '</div></div>';
     }
@@ -1154,12 +1154,23 @@ export const INDEX_HTML = `<!doctype html>
           return;
         }
         var p = state.params || getParams();
-        var res = await fetch('/api/enrich', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ names: batch, tlds: p.tlds, brief: p.brief, avoid: p.avoid, maxLen: p.maxLen }) });
+        var res = await fetch('/api/enrich', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ names: batch, tlds: p.tlds, brief: p.brief, avoid: p.avoid, maxLen: p.maxLen, lite: deepenRounds > 0 }) });
         if (res.status === 401) { state.active = false; status.textContent = ''; showAuth(function(){ generateNames(); }); return; }
         var data = await res.json();
         var enriched = data.results || [];
         allResults = allResults.concat(enriched);
-        reRender();
+        // Append only the new cards — a full grid rebuild gets expensive hundreds of cards
+        // deep. Full reRender only when the grid is in an empty/deepening state or nothing
+        // new is visible (so its fallback logic can run).
+        var grid = document.getElementById('results-grid');
+        var fresh = enriched.filter(isVisible);
+        if (fresh.length > 0 && !grid.querySelector('.empty-state')) {
+          deepenRounds = 0;
+          grid.insertAdjacentHTML('beforeend', fresh.map(cardHtml).join(''));
+          lucide.createIcons();
+        } else {
+          reRender();
+        }
         state.hasMore = !(poolExhausted && namePool.length === 0);
         status.textContent = state.hasMore ? '' : "That's all for this brief — try Regenerate or new seeds.";
         // Prefetch the next pool in the background so scrolling stays instant.
