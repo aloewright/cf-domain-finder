@@ -49,6 +49,12 @@ type NamingContext = {
   keywords: string[];
   aiKeywords: string[];
   avoid: string[];
+  maxLen: number | null;
+};
+
+type SearchFeedback = {
+  closer: string[];
+  further: string[];
 };
 
 const DEFAULT_SEEDS = [
@@ -93,6 +99,11 @@ function parseWords(input: unknown) {
 function parseSeedWords(input: unknown) {
   return unique([...DEFAULT_SEEDS, ...parseWords(input)]);
 }
+function parseMaxLen(input: unknown): number | null {
+  if (typeof input !== "number" || !Number.isFinite(input)) return null;
+  const value = Math.floor(input);
+  return value >= 4 && value < 20 ? value : null;
+}
 function parseTlds(input: unknown): string[] {
   if (!Array.isArray(input)) return DEFAULT_TLDS;
   const cleaned = unique(
@@ -100,6 +111,16 @@ function parseTlds(input: unknown): string[] {
       .filter((tld) => tld.length >= 2 && tld.length <= 10)
   ).slice(0, 12);
   return cleaned.length ? cleaned : DEFAULT_TLDS;
+}
+function parseFeedback(input: unknown): SearchFeedback {
+  const record = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  const list = (value: unknown) => Array.isArray(value)
+    ? unique(value.map((item) => brandCase(String(item))).filter(Boolean)).slice(-24)
+    : [];
+  return {
+    closer: list(record.closer),
+    further: list(record.further)
+  };
 }
 
 function suggestedKeywords(context: Omit<NamingContext, "aiKeywords">) {
@@ -123,14 +144,15 @@ function suggestedKeywords(context: Omit<NamingContext, "aiKeywords">) {
 
 function buildContext(body: {
   brief?: string; industry?: string; audience?: string;
-  keywords?: string; aiKeywords?: string; avoid?: string;
+  keywords?: string; aiKeywords?: string; avoid?: string; maxLen?: unknown;
 }): NamingContext {
   const partial = {
     brief: body.brief ?? "",
     industry: body.industry ?? "",
     audience: body.audience ?? "",
     keywords: parseWords(body.keywords),
-    avoid: parseWords(body.avoid)
+    avoid: parseWords(body.avoid),
+    maxLen: parseMaxLen(body.maxLen)
   };
   return { ...partial, aiKeywords: unique([...parseWords(body.aiKeywords), ...suggestedKeywords(partial)]) };
 }
@@ -162,7 +184,7 @@ function generateCandidates(context: NamingContext, seedsInput: unknown) {
     "portmind", "portcraft", "clearport"
   );
   return unique(raw.map(brandCase).filter(Boolean))
-    .filter((name) => name.length >= 5 && name.length <= 18)
+    .filter((name) => name.length >= 4 && name.length <= (context.maxLen ?? 18))
     .filter((name) => !avoidTerms.some((term) => term && normalize(name).includes(term)));
 }
 
@@ -242,6 +264,20 @@ function cardScore(name: string, appStoreCount: number, domains: DomainInfo[], c
   if (name.length <= 10) score += 6;
   else if (name.length >= 16) score -= 6;
 
+  if (context.maxLen != null) {
+    const overBy = name.length - context.maxLen;
+    if (overBy > 0) score -= 18 + overBy * 8;
+    else {
+      const idealFloor = Math.max(4, Math.floor(context.maxLen * 0.72));
+      if (name.length >= idealFloor) score += 10;
+      else score -= Math.min(10, (idealFloor - name.length) * 3);
+    }
+  }
+
+  // Pronounceability: a name nobody can say is a name nobody can spread.
+  if (!/[aeiouy]/i.test(name)) score -= 14;
+  if (/[bcdfghjklmnpqrstvwxz]{4,}/i.test(name)) score -= 8;
+
   const normName = normalize(name);
   if (context.avoid.map(normalize).some((t) => t && normName.includes(t))) score -= 50;
   return Math.max(2, Math.min(100, Math.round(score)));
@@ -274,6 +310,38 @@ async function gatewayText(
   );
   const result = await Promise.race([call, timeout]);
   return result.response ?? "";
+}
+
+// The namer wants quality over raw speed: gpt-oss-120b (Responses API via the binding —
+// instructions/input in, output[] out) at low reasoning effort produces names that actually
+// track the brief, where the fast Llama tends toward generic tech filler. Same sanctioned
+// gateway pattern as gatewayText; callers fall back to gatewayText when this errors/times out.
+async function namerText(env: Env, system: string, prompt: string, timeoutMs: number): Promise<string> {
+  const call = (env.AI as { run: (model: string, inputs: unknown, opts?: unknown) => Promise<unknown> }).run(
+    "@cf/openai/gpt-oss-120b",
+    { instructions: system, input: prompt, reasoning: { effort: "low" } },
+    { gateway: { id: "x" } }
+  );
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("AI timed out")), timeoutMs)
+  );
+  const result = (await Promise.race([call, timeout])) as {
+    output_text?: string;
+    output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
+    response?: string;
+  };
+  if (typeof result?.output_text === "string" && result.output_text) return result.output_text;
+  if (Array.isArray(result?.output)) {
+    const parts: string[] = [];
+    for (const item of result.output) {
+      if (item?.type !== "message" || !Array.isArray(item.content)) continue;
+      for (const piece of item.content) {
+        if (typeof piece?.text === "string") parts.push(piece.text);
+      }
+    }
+    if (parts.length) return parts.join("\n");
+  }
+  return typeof result?.response === "string" ? result.response : "";
 }
 
 async function groundName(name: string, web: CandidateResult["web"], context: NamingContext, env: Env): Promise<GroundingData> {
@@ -466,6 +534,18 @@ const NAMER_STOP = new Set([
   "okay", "maybe", "perhaps", "really", "actual", "actually", "around", "about", "above"
 ]);
 
+// Near-duplicate guard: two names are "the same idea" when one contains the other (a stem
+// with a suffix bolted on) or they share a long common prefix. Keeps a batch from burning
+// five slots on minor twists of one stem.
+function tooSimilar(a: string, b: string) {
+  const x = a.toLowerCase();
+  const y = b.toLowerCase();
+  if (x === y) return true;
+  if ((x.includes(y) || y.includes(x)) && Math.abs(x.length - y.length) <= 3) return true;
+  const stem = Math.min(x.length, y.length, 6);
+  return stem >= 5 && x.slice(0, stem) === y.slice(0, stem);
+}
+
 // AI-generated, diverse, brandable names via dynamic/text_gen. The `exclude` list (names
 // already shown) keeps infinite scroll surfacing fresh, varied results instead of repeats.
 // Returns [] on failure so the caller can fall back to the deterministic generator.
@@ -474,30 +554,48 @@ async function generateAiNames(
   seedsInput: unknown,
   exclude: string[],
   count: number,
+  feedback: SearchFeedback,
   env: Env
 ): Promise<string[]> {
   const seeds = parseWords(seedsInput);
   const avoid = context.avoid;
+  const maxNameLength = context.maxLen ?? 14;
   const lines = [
     `Generate ${count + 8} unique, brandable product names.`,
     context.brief ? `Brief: ${context.brief}` : "",
     context.industry ? `Industry: ${context.industry}` : "",
+    context.maxLen != null
+      ? `Hard length preference: names must be ${context.maxLen} characters or fewer. Prefer names between ${Math.max(4, Math.floor(context.maxLen * 0.72))} and ${context.maxLen} characters.`
+      : "",
     seeds.length
       ? `Thematic inspiration (use as loose themes; do NOT just append fixed suffixes to these words): ${seeds.join(", ")}`
+      : "",
+    feedback.closer.length
+      ? `User marked these as closer to the target; generate names with a similar feel, rhythm, and semantic neighborhood without copying them: ${feedback.closer.join(", ")}`
+      : "",
+    feedback.further.length
+      ? `User marked these as further away; avoid names with a similar feel, rhythm, or semantic neighborhood: ${feedback.further.join(", ")}`
       : "",
     avoid.length ? `Avoid these themes/words entirely: ${avoid.join(", ")}` : "",
     exclude.length ? `Do NOT repeat any of these already-shown names: ${exclude.slice(-120).join(", ")}` : "",
     "",
-    "Each name is ONE token, 4-14 letters, no spaces or punctuation, easy to say, and clearly distinct from the others. Vary the styles widely: invented words, blends, evocative real words, playful coinages. Return ONLY the names separated by spaces, nothing else."
+    "Every name must feel tailor-made for the brief — evoke its meaning, audience, or mood. No generic tech filler.",
+    `Each name is ONE token, 4-${maxNameLength} letters, no spaces or punctuation, easy to say, and clearly distinct from the others. Vary the styles widely: invented words, blends, evocative real words, playful coinages. Do not reuse one stem with different endings. Return ONLY the names separated by spaces, nothing else.`
   ].filter(Boolean);
 
+  const system = "You are an expert startup and product namer who produces diverse, memorable, brandable names.";
   try {
-    const text = await gatewayText(
-      env,
-      "You are an expert startup and product namer who produces diverse, memorable, brandable names.",
-      lines.join("\n"),
-      { timeoutMs: 13000, maxOutputTokens: 400 }
-    );
+    // Quality-first: the stronger reasoning model, then the fast Llama if it errors,
+    // times out, or returns nothing usable.
+    let text = "";
+    try {
+      text = await namerText(env, system, lines.join("\n"), 16000);
+    } catch {
+      text = "";
+    }
+    if (!text.trim()) {
+      text = await gatewayText(env, system, lines.join("\n"), { timeoutMs: 13000, maxOutputTokens: 400 });
+    }
     const seen = new Set(exclude.map((n) => n.toLowerCase()));
     const avoidTerms = avoid.map(normalize);
     // Words that merely echo the prompt (brief/industry/seeds) or are reasoning prose are
@@ -508,12 +606,27 @@ async function generateAiNames(
       // exclude, and the instructions) so the model's reasoning echoes don't leak as names.
       ...parseWords(lines.join(" "))
     ]);
-    return unique(text.split(/[^a-zA-Z]+/).map(brandCase).filter(Boolean))
-      .filter((n) => n.length >= 4 && n.length <= 16)
+    const candidates = unique(text.split(/[^a-zA-Z]+/).map(brandCase).filter(Boolean))
+      .filter((n) => n.length >= 4 && n.length <= maxNameLength)
       .filter((n) => !blocked.has(n.toLowerCase()))
       .filter((n) => !avoidTerms.some((t) => t && normalize(n).includes(t)))
-      .filter((n) => !seen.has(n.toLowerCase()))
-      .slice(0, count);
+      .filter((n) => !seen.has(n.toLowerCase()));
+    // Within-batch diversity: drop near-twins outright, and cap each 4-char stem family
+    // at two so one seed word can't dominate the batch (observed: five Hush*/Moon* names
+    // per call). Not applied against `exclude` — thumbs-up names live there, and "closer"
+    // follow-ups may legitimately share their feel.
+    const kept: string[] = [];
+    const stemCounts = new Map<string, number>();
+    for (const name of candidates) {
+      if (kept.some((existing) => tooSimilar(existing, name))) continue;
+      const stem = name.toLowerCase().slice(0, 4);
+      const seenStem = stemCounts.get(stem) ?? 0;
+      if (seenStem >= 2) continue;
+      stemCounts.set(stem, seenStem + 1);
+      kept.push(name);
+      if (kept.length >= count) break;
+    }
+    return kept;
   } catch {
     return [];
   }
@@ -528,19 +641,20 @@ async function handleSuggest(request: Request, env: Env) {
   const body = (await request.json().catch(() => ({}))) as {
     brief?: string; industry?: string; audience?: string; keywords?: string;
     aiKeywords?: string; avoid?: string; seeds?: string; count?: number; offset?: number;
-    tlds?: unknown; exclude?: unknown;
+    tlds?: unknown; exclude?: unknown; maxLen?: unknown; feedback?: unknown;
   };
 
   const context = buildContext(body);
-  const count = clampInt(body.count, 4, 24, 12);
+  const count = clampInt(body.count, 4, 40, 16);
   const offset = clampInt(body.offset, 0, 100000, 0);
   const tlds = parseTlds(body.tlds);
+  const feedback = parseFeedback(body.feedback);
   const exclude = Array.isArray(body.exclude)
     ? body.exclude.map((n) => String(n)).filter(Boolean).slice(0, 120)
     : [];
 
   // Primary: AI-generated diverse names. Fallback: deterministic combos (exclude-aware).
-  let page = await generateAiNames(context, body.seeds, exclude, count, env);
+  let page = await generateAiNames(context, body.seeds, exclude, count, feedback, env);
   if (page.length === 0) {
     const seen = new Set(exclude.map((n) => n.toLowerCase()));
     page = generateCandidates(context, body.seeds)
@@ -585,14 +699,16 @@ async function handleNames(request: Request, env: Env) {
   const body = (await request.json().catch(() => ({}))) as {
     brief?: string; industry?: string; audience?: string; keywords?: string;
     aiKeywords?: string; avoid?: string; seeds?: string; count?: number; exclude?: unknown;
+    maxLen?: unknown; feedback?: unknown;
   };
   const context = buildContext(body);
-  const count = clampInt(body.count, 8, 40, 30);
+  const count = clampInt(body.count, 8, 96, 72);
+  const feedback = parseFeedback(body.feedback);
   const exclude = Array.isArray(body.exclude)
     ? body.exclude.map((n) => String(n)).filter(Boolean).slice(0, 150)
     : [];
 
-  let names = await generateAiNames(context, body.seeds, exclude, count, env);
+  let names = await generateAiNames(context, body.seeds, exclude, count, feedback, env);
   if (names.length === 0) {
     const seen = new Set(exclude.map((n) => n.toLowerCase()));
     names = generateCandidates(context, body.seeds)
@@ -636,10 +752,10 @@ async function handleEnrich(request: Request, env: Env) {
   if (!userId) return json({ error: "Authentication required" }, { status: 401 });
 
   const body = (await request.json().catch(() => ({}))) as {
-    names?: unknown; tlds?: unknown; brief?: string; industry?: string; avoid?: string;
+    names?: unknown; tlds?: unknown; brief?: string; industry?: string; avoid?: string; maxLen?: unknown;
   };
   const names = Array.isArray(body.names)
-    ? body.names.map((n) => String(n)).filter(Boolean).slice(0, 14)
+    ? body.names.map((n) => String(n)).filter(Boolean).slice(0, 24)
     : [];
   if (names.length === 0) return json({ results: [] });
 

@@ -3,7 +3,7 @@ export const INDEX_HTML = `<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CTL</title>
+  <title>copythe.link</title>
   <script src="https://unpkg.com/lucide@latest"></script>
   <style>
     @font-face {
@@ -64,6 +64,8 @@ export const INDEX_HTML = `<!doctype html>
       background: linear-gradient(to right, #fff, var(--muted));
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     }
+    .logo-group { display: flex; align-items: center; min-height: 44px; }
+    .logo-group .app-icon { width: 44px; height: 44px; display: block; filter: drop-shadow(0 10px 22px rgba(0,0,0,0.34)); }
     #header-actions { display: flex; align-items: center; gap: 12px; }
     .saved-btn {
       display: inline-flex; align-items: center; gap: 7px;
@@ -186,6 +188,13 @@ export const INDEX_HTML = `<!doctype html>
     .card-foot { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; margin-top: 2px; }
     .card-foot i { width: 15px; height: 15px; }
     .card-foot b { color: var(--text); font-weight: 800; }
+    .feedback-actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; margin-top: 2px; }
+    .feedback-actions span { color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; margin-right: auto; }
+    .fb-btn { width: 32px; height: 32px; border: 1px solid var(--line); border-radius: var(--r-pill); background: rgba(255,255,255,0.04); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease, transform 0.15s ease; }
+    .fb-btn:hover { color: var(--text); border-color: rgba(244,241,236,0.28); background: rgba(255,255,255,0.08); transform: translateY(-1px); }
+    .fb-btn.on { color: var(--accent); border-color: rgba(139,232,238,0.45); background: var(--accent-soft); }
+    .fb-btn i, .fb-btn svg { width: 15px; height: 15px; }
+    .empty-state { grid-column: 1 / -1; border: 1px dashed var(--line); border-radius: var(--r-lg); padding: 28px; text-align: center; color: var(--muted); font-weight: 700; background: rgba(255,255,255,0.025); }
 
     .scroll-status { text-align: center; color: var(--muted); padding: 32px 0 8px; font-weight: 600; grid-column: 1 / -1; }
     .spinner { width: 22px; height: 22px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: var(--r-pill); display: inline-block; animation: spin 0.8s linear infinite; vertical-align: middle; }
@@ -279,7 +288,41 @@ export const INDEX_HTML = `<!doctype html>
 <body>
   <div class="app-container">
     <header>
-      <div class="logo-group"><h1>CTL</h1></div>
+      <div class="logo-group">
+        <svg class="app-icon" xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" role="img" aria-label="copythe.link">
+          <defs>
+            <linearGradient id="ctl-bg" x1="12" y1="10" x2="108" y2="112" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#fff7c7"/>
+              <stop offset="0.46" stop-color="#ffb15f"/>
+              <stop offset="1" stop-color="#36d8c7"/>
+            </linearGradient>
+            <linearGradient id="ctl-sheen" x1="18" y1="16" x2="96" y2="92" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.78"/>
+              <stop offset="0.42" stop-color="#ffffff" stop-opacity="0.1"/>
+              <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+            </linearGradient>
+            <filter id="ctl-shadow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#25120a" flood-opacity="0.35"/>
+            </filter>
+          </defs>
+          <rect width="120" height="120" rx="28" fill="#101114"/>
+          <rect x="6" y="6" width="108" height="108" rx="24" fill="url(#ctl-bg)" filter="url(#ctl-shadow)"/>
+          <path d="M18 20c20 5 43 3 84-4v74c-18 8-44 14-84 12z" fill="url(#ctl-sheen)"/>
+          <g transform="rotate(-28 60 60)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <g stroke="#fff8df" stroke-opacity="0.3" stroke-width="17">
+              <path d="M45 72H33a17 17 0 0 1 0-34h24a17 17 0 0 1 13 6"/>
+              <path d="M75 48h12a17 17 0 0 1 0 34H63a17 17 0 0 1-13-6"/>
+              <path d="M45 60h30"/>
+            </g>
+            <g stroke="#181a1f" stroke-width="10">
+              <path d="M45 72H33a17 17 0 0 1 0-34h24a17 17 0 0 1 13 6"/>
+              <path d="M75 48h12a17 17 0 0 1 0 34H63a17 17 0 0 1-13-6"/>
+              <path d="M45 60h30"/>
+            </g>
+          </g>
+          <rect x="6.75" y="6.75" width="106.5" height="106.5" rx="23.25" fill="none" stroke="#fff8df" stroke-opacity="0.78" stroke-width="1.5"/>
+        </svg>
+      </div>
       <div id="header-actions"></div>
     </header>
 
@@ -451,7 +494,9 @@ export const INDEX_HTML = `<!doctype html>
     var TLDS = ['com','ai','io','dev','app','co','net','org','xyz','me','tech','store','online','site','pro','info','biz','design','studio','cloud','sh','gg','live','link'];
     var selectedTlds = { com: true };
     var allResults = [];
-    var state = { count: 12, poolCount: 30, hasMore: true, loading: false, active: false, params: null, maxLen: 99 };
+    var state = { count: 24, poolCount: 72, hasMore: true, loading: false, active: false, params: null, maxLen: 99 };
+    var sessionFeedback = { closer: [], further: [] };
+    var lengthTimer = null;
     var hacks = { prefix: false, suffix: false, plural: false, tldhack: false };
     var hackResults = [];
     var HACK_PREFIXES = ['get','try','go','my','the','new'];
@@ -466,6 +511,7 @@ export const INDEX_HTML = `<!doctype html>
     var pendingAfterAuth = null;
 
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'})[c]; }); }
+    function resetFeedback() { sessionFeedback = { closer: [], further: [] }; }
 
     // ---------- auth ----------
     async function checkMe() {
@@ -650,12 +696,16 @@ export const INDEX_HTML = `<!doctype html>
     function getSelectedTlds() { var out = TLDS.filter(function(t){ return selectedTlds[t]; }); return out.length ? out : ['com']; }
     function toggleHideTaken() { document.getElementById('hide-taken-switch').classList.toggle('on'); reRender(); }
     function hideTakenOn() { return document.getElementById('hide-taken-switch').classList.contains('on'); }
-    function onLengthChange() {
+    function onLengthChange(skipRegenerate) {
       var v = parseInt(document.getElementById('length-range').value, 10);
       state.maxLen = v >= 20 ? 99 : v;
       var lbl = document.getElementById('length-val');
       if (lbl) lbl.textContent = v >= 20 ? 'Any' : ('≤ ' + v);
       reRender(); renderHacks();
+      if (state.active && !skipRegenerate) {
+        clearTimeout(lengthTimer);
+        lengthTimer = setTimeout(function(){ generateNames(); }, 420);
+      }
     }
 
     // ---------- results rendering ----------
@@ -673,6 +723,7 @@ export const INDEX_HTML = `<!doctype html>
     // Domain rows for a card, with the hide-premium filter applied.
     function rowsFor(item) {
       var rows = item.domains || [];
+      if (hideTakenOn()) rows = rows.filter(function(d){ return d.available !== false; });
       if (hidePremiumOn()) rows = rows.filter(function(d){ return !isPremium(d); });
       return rows;
     }
@@ -697,6 +748,34 @@ export const INDEX_HTML = `<!doctype html>
         return '<div class="dom-row dom-taken"><span class="dom-name">' + label + '</span><span class="dom-spacer"></span><span class="dom-status">Taken</span></div>';
       }
       return '<div class="dom-row"><span class="dom-name">' + label + '</span><span class="dom-spacer"></span><span class="dom-status">&mdash;</span></div>';
+    }
+    function feedbackFor(name) {
+      if (sessionFeedback.closer.indexOf(name) !== -1) return 'closer';
+      if (sessionFeedback.further.indexOf(name) !== -1) return 'further';
+      return '';
+    }
+    function setFeedbackList(kind, name, on) {
+      sessionFeedback[kind] = sessionFeedback[kind].filter(function(n){ return n !== name; });
+      if (on) sessionFeedback[kind].push(name);
+      sessionFeedback[kind] = sessionFeedback[kind].slice(-24);
+    }
+    function rateName(btn) {
+      var name = btn.dataset.name || '';
+      var kind = btn.dataset.feedback || '';
+      if (!name || (kind !== 'closer' && kind !== 'further')) return;
+      var already = feedbackFor(name) === kind;
+      setFeedbackList('closer', name, false);
+      setFeedbackList('further', name, false);
+      if (!already) setFeedbackList(kind, name, true);
+      allResults.forEach(function(item){ if (item.name === name) item.userFeedback = already ? '' : kind; });
+      reRender();
+      state.hasMore = true;
+      poolExhausted = false;
+      if (!state.loading) {
+        var status = document.getElementById('scroll-status');
+        status.innerHTML = '<span class="spinner"></span> Refining from your feedback…';
+        refillPool().then(loadMore);
+      }
     }
     function isVisible(item) {
       if (!item._hack && item.name.length > state.maxLen) return false;
@@ -724,10 +803,15 @@ export const INDEX_HTML = `<!doctype html>
           '<div class="domain-list">' + rows + '</div></div>';
       }
       var meta = item.displayName ? '<div class="card-meta">' + esc(item.displayName) + '</div>' : '';
+      var fb = feedbackFor(item.name);
+      var feedback = '<div class="feedback-actions"><span>Tune</span>' +
+        '<button class="fb-btn ' + (fb === 'closer' ? 'on' : '') + '" data-name="' + esc(item.name) + '" data-feedback="closer" onclick="rateName(this)" title="Closer to what I want" aria-label="Mark ' + esc(item.name) + ' closer"><i data-lucide="thumbs-up"></i></button>' +
+        '<button class="fb-btn ' + (fb === 'further' ? 'on' : '') + '" data-name="' + esc(item.name) + '" data-feedback="further" onclick="rateName(this)" title="Further from what I want" aria-label="Mark ' + esc(item.name) + ' further"><i data-lucide="thumbs-down"></i></button></div>';
       return '<div class="result-card"><div class="card-header"><div><h3 class="card-title">' + esc(item.name) + '</h3></div>' +
         '<div class="circular-progress">' + renderProgressCircle(item.score) + '</div></div>' +
         meta +
         '<div class="domain-list">' + rows + '</div>' +
+        feedback +
         '<div class="card-foot"><i data-lucide="smartphone"></i> App Store: <b>' + (item.appStoreCount || 0) + '</b> results</div></div>';
     }
     // How well a name fits the current filters — used to pick the closest names when an
@@ -736,14 +820,17 @@ export const INDEX_HTML = `<!doctype html>
       var r = item.score || 0;
       if (item.name.length <= state.maxLen) r += 1000;
       if (rowsFor(item).some(function(d){ return d.available === true; })) r += 400;
+      if (feedbackFor(item.name) === 'closer') r += 900;
+      if (feedbackFor(item.name) === 'further') r -= 1400;
       return r;
     }
     function reRender() {
       var grid = document.getElementById('results-grid');
-      var visible = allResults.filter(isVisible);
-      // Never respond with no results: if filters hide everything, show the closest names.
+      var visible = allResults.filter(isVisible).sort(function(a, b){ return fitRank(b) - fitRank(a); });
       if (visible.length === 0 && allResults.length > 0) {
-        visible = allResults.slice().sort(function(a, b){ return fitRank(b) - fitRank(a); });
+        grid.innerHTML = '<div class="empty-state">No available matches in this batch yet. Looking deeper…</div>';
+        if (state.active && state.hasMore && !state.loading) setTimeout(loadMore, 80);
+        return;
       }
       grid.innerHTML = visible.map(cardHtml).join('');
       lucide.createIcons();
@@ -863,7 +950,15 @@ export const INDEX_HTML = `<!doctype html>
     }
 
     function getParams() {
-      return { brief: document.getElementById('brief').value, industry: document.getElementById('industry').value, avoid: document.getElementById('avoid').value, seeds: document.getElementById('seeds').value, tlds: getSelectedTlds() };
+      var rawLen = parseInt(document.getElementById('length-range').value, 10);
+      return {
+        brief: document.getElementById('brief').value,
+        industry: document.getElementById('industry').value,
+        avoid: document.getElementById('avoid').value,
+        seeds: document.getElementById('seeds').value,
+        tlds: getSelectedTlds(),
+        maxLen: rawLen >= 20 ? null : rawLen
+      };
     }
 
     // One slow AI call fills a pool of names the client paginates through.
@@ -876,7 +971,7 @@ export const INDEX_HTML = `<!doctype html>
         allResults.forEach(function(r){ seen[r.name.toLowerCase()] = 1; });
         namePool.forEach(function(n){ seen[n.toLowerCase()] = 1; });
         var exclude = allResults.map(function(r){ return r.name; }).concat(namePool).slice(-150);
-        var res = await fetch('/api/names', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ brief: p.brief, industry: p.industry, avoid: p.avoid, seeds: p.seeds, exclude: exclude, count: state.poolCount }) });
+        var res = await fetch('/api/names', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ brief: p.brief, industry: p.industry, avoid: p.avoid, seeds: p.seeds, maxLen: p.maxLen, feedback: sessionFeedback, exclude: exclude, count: state.poolCount }) });
         if (res.status === 401) { state.active = false; poolExhausted = true; showAuth(function(){ generateNames(); }); return; }
         var data = await res.json();
         var fresh = (data.names || []).filter(function(n){ return !seen[String(n).toLowerCase()]; });
@@ -891,6 +986,7 @@ export const INDEX_HTML = `<!doctype html>
 
     async function generateNames() {
       if (!currentUser) { showAuth(function(){ generateNames(); }); return; }
+      if (!state.active) resetFeedback();
       var btn = document.getElementById('generate-btn');
       if (btn) { btn.disabled = true; btn.innerHTML = 'Generating... <i data-lucide="loader-2"></i>'; lucide.createIcons(); }
       document.querySelectorAll('.wizard-step').forEach(function(s){ s.classList.remove('active'); });
@@ -898,8 +994,9 @@ export const INDEX_HTML = `<!doctype html>
       allResults = []; namePool = []; poolExhausted = false; refilling = false;
       resetHacks();
       document.getElementById('results-grid').innerHTML = '';
-      state.hasMore = true; state.loading = false; state.active = true; state.params = getParams();
-      onLengthChange();
+      state.hasMore = true; state.loading = false; state.active = true;
+      onLengthChange(true);
+      state.params = getParams();
       document.getElementById('scroll-status').innerHTML = '<span class="spinner"></span> Generating names…';
       await refillPool();
       await loadMore();
@@ -921,7 +1018,7 @@ export const INDEX_HTML = `<!doctype html>
           return;
         }
         var p = state.params || getParams();
-        var res = await fetch('/api/enrich', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ names: batch, tlds: p.tlds, brief: p.brief, avoid: p.avoid }) });
+        var res = await fetch('/api/enrich', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ names: batch, tlds: p.tlds, brief: p.brief, avoid: p.avoid, maxLen: p.maxLen }) });
         if (res.status === 401) { state.active = false; status.textContent = ''; showAuth(function(){ generateNames(); }); return; }
         var data = await res.json();
         var enriched = data.results || [];
