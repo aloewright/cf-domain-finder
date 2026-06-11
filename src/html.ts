@@ -195,6 +195,13 @@ export const INDEX_HTML = `<!doctype html>
     .fb-btn.on { color: var(--accent); border-color: rgba(139,232,238,0.45); background: var(--accent-soft); }
     .fb-btn i, .fb-btn svg { width: 15px; height: 15px; }
     .empty-state { grid-column: 1 / -1; border: 1px dashed var(--line); border-radius: var(--r-lg); padding: 28px; text-align: center; color: var(--muted); font-weight: 700; background: rgba(255,255,255,0.025); }
+    .style-badge { display: inline-block; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 3px 9px; margin-top: 7px; }
+    .say-btn { width: 26px; height: 26px; border: 1px solid var(--line); border-radius: var(--r-pill); background: rgba(255,255,255,0.04); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: color 0.15s ease, border-color 0.15s ease; flex: none; }
+    .say-btn:hover { color: var(--text); border-color: rgba(244,241,236,0.28); }
+    .say-btn i, .say-btn svg { width: 13px; height: 13px; }
+    .card-foot .foot-sep { color: var(--line); }
+    .card-foot a.tm-link { color: var(--muted); display: inline-flex; align-items: center; gap: 4px; text-decoration: none; font-weight: 800; }
+    .card-foot a.tm-link:hover { color: var(--text); }
 
     .scroll-status { text-align: center; color: var(--muted); padding: 32px 0 8px; font-weight: 600; grid-column: 1 / -1; }
     .spinner { width: 22px; height: 22px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: var(--r-pill); display: inline-block; animation: spin 0.8s linear infinite; vertical-align: middle; }
@@ -406,6 +413,16 @@ export const INDEX_HTML = `<!doctype html>
             <div class="tld-grid" id="tld-grid"></div>
           </div>
           <div class="filter-block">
+            <span class="filter-label">Name styles</span>
+            <div class="hack-grid-toggles">
+              <span class="hack-toggle" id="style-invented" onclick="toggleStyle('invented')">Invented</span>
+              <span class="hack-toggle" id="style-real" onclick="toggleStyle('real')">Real words</span>
+              <span class="hack-toggle" id="style-compound" onclick="toggleStyle('compound')">Compound</span>
+              <span class="hack-toggle" id="style-playful" onclick="toggleStyle('playful')">Playful</span>
+              <span class="hack-toggle" id="style-professional" onclick="toggleStyle('professional')">Professional</span>
+            </div>
+          </div>
+          <div class="filter-block">
             <div class="switch-row" id="hide-taken-row" onclick="toggleHideTaken()">
               <span class="switch-label">Hide taken domains</span>
               <span class="switch on" id="hide-taken-switch"></span>
@@ -498,6 +515,35 @@ export const INDEX_HTML = `<!doctype html>
     var sessionFeedback = { closer: [], further: [] };
     var lengthTimer = null;
     var deepenRounds = 0;
+    var styleSel = {};
+    function selectedStyles() { return Object.keys(styleSel).filter(function(s){ return styleSel[s]; }); }
+    function toggleStyle(s) {
+      styleSel[s] = !styleSel[s];
+      var el = document.getElementById('style-' + s);
+      if (el) el.classList.toggle('on', !!styleSel[s]);
+      deepenRounds = 0;
+      reRender();
+      if (!state.active) return;
+      // Refine, don't reset: keep current cards (the filter hides off-style ones) and
+      // pull a fresh style-steered pool behind them.
+      state.params = getParams();
+      state.hasMore = true;
+      poolExhausted = false;
+      if (!state.loading) {
+        var status = document.getElementById('scroll-status');
+        status.innerHTML = '<span class="spinner"></span> Tuning to your styles…';
+        refillPool().then(loadMore);
+      }
+    }
+    function sayName(n) {
+      try {
+        var u = new SpeechSynthesisUtterance(n);
+        u.rate = 0.85;
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(u);
+      } catch (e) {}
+    }
+    function sylCount(n) { var m = String(n).toLowerCase().match(/[aeiouy]+/g); return m ? m.length : 1; }
     var hacks = { prefix: false, suffix: false, plural: false, tldhack: false };
     var hackResults = [];
     var HACK_PREFIXES = ['get','try','go','my','the','new'];
@@ -782,6 +828,10 @@ export const INDEX_HTML = `<!doctype html>
     }
     function isVisible(item) {
       if (!item._hack && item.name.length > state.maxLen) return false;
+      // Style filter: unknown-style items pass (hacks, synth fallback) so the filter can
+      // never empty the grid on its own.
+      var stylesOn = selectedStyles();
+      if (!item._hack && stylesOn.length && item.style && stylesOn.indexOf(item.style) === -1) return false;
       var rows = rowsFor(item);
       if (rows.length === 0) return false;
       // While variants are still being checked, keep the card so it can resolve.
@@ -813,12 +863,19 @@ export const INDEX_HTML = `<!doctype html>
       var gh = '';
       if (item.github === true) gh = '<span class="foot-sep">&middot;</span><i data-lucide="at-sign"></i> GitHub: <b>free</b>';
       else if (item.github === false) gh = '<span class="foot-sep">&middot;</span><i data-lucide="at-sign"></i> GitHub: taken';
-      return '<div class="result-card"><div class="card-header"><div><h3 class="card-title">' + esc(item.name) + '</h3></div>' +
+      var badge = item.style ? '<span class="style-badge">' + esc(item.style) + '</span>' : '';
+      var tmHref = 'https://www.google.com/search?q=%22' + encodeURIComponent(item.name) + '%22+trademark';
+      return '<div class="result-card"><div class="card-header"><div><h3 class="card-title">' + esc(item.name) + '</h3>' + badge + '</div>' +
         '<div class="circular-progress">' + renderProgressCircle(item.score) + '</div></div>' +
         meta +
         '<div class="domain-list">' + rows + '</div>' +
         feedback +
-        '<div class="card-foot"><i data-lucide="smartphone"></i> App Store: <b>' + (item.appStoreCount || 0) + '</b>' + gh + '</div></div>';
+        '<div class="card-foot">' +
+        '<button class="say-btn" data-name="' + esc(item.name) + '" onclick="sayName(this.dataset.name)" title="Hear it spoken" aria-label="Pronounce ' + esc(item.name) + '"><i data-lucide="volume-2"></i></button>' +
+        sylCount(item.name) + ' syl' +
+        '<span class="foot-sep">&middot;</span><i data-lucide="smartphone"></i> App Store: <b>' + (item.appStoreCount || 0) + '</b>' + gh +
+        '<span class="foot-sep">&middot;</span><a class="tm-link" href="' + tmHref + '" target="_blank" rel="noopener noreferrer" title="Screen for trademark conflicts">TM <i data-lucide="external-link"></i></a>' +
+        '</div></div>';
     }
     // How well a name fits the current filters — used to pick the closest names when an
     // exact-match set would be empty (so the grid never dead-ends on "no results").
@@ -979,7 +1036,8 @@ export const INDEX_HTML = `<!doctype html>
         avoid: document.getElementById('avoid').value,
         seeds: document.getElementById('seeds').value,
         tlds: getSelectedTlds(),
-        maxLen: rawLen >= 20 ? null : rawLen
+        maxLen: rawLen >= 20 ? null : rawLen,
+        styles: selectedStyles()
       };
     }
 
@@ -993,7 +1051,7 @@ export const INDEX_HTML = `<!doctype html>
         allResults.forEach(function(r){ seen[r.name.toLowerCase()] = 1; });
         namePool.forEach(function(n){ seen[n.toLowerCase()] = 1; });
         var exclude = allResults.map(function(r){ return r.name; }).concat(namePool).slice(-150);
-        var res = await fetch('/api/names', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ brief: p.brief, industry: p.industry, avoid: p.avoid, seeds: p.seeds, maxLen: p.maxLen, feedback: sessionFeedback, exclude: exclude, count: state.poolCount }) });
+        var res = await fetch('/api/names', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ brief: p.brief, industry: p.industry, avoid: p.avoid, seeds: p.seeds, maxLen: p.maxLen, styles: p.styles, feedback: sessionFeedback, exclude: exclude, count: state.poolCount }) });
         if (res.status === 401) { state.active = false; poolExhausted = true; showAuth(function(){ generateNames(); }); return; }
         var data = await res.json();
         var fresh = (data.names || []).filter(function(n){ return !seen[String(n).toLowerCase()]; });

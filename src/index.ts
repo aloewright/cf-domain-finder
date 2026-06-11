@@ -50,7 +50,19 @@ type NamingContext = {
   aiKeywords: string[];
   avoid: string[];
   maxLen: number | null;
+  styles: string[];
 };
+
+// Name-style taxonomy, modeled on how brandable-domain marketplaces (BrandBucket, Atom,
+// Brandpa) let users browse by kind of name rather than just keyword.
+const STYLE_PROMPTS: Record<string, string> = {
+  invented: "invented coined words that sound brandable (like Sonos or Zynga)",
+  real: "evocative real dictionary words used metaphorically",
+  compound: "two-word blends or compounds",
+  playful: "playful, punny, lighthearted coinages",
+  professional: "serious, credible, corporate-sounding names"
+};
+const STYLE_KEYS = Object.keys(STYLE_PROMPTS);
 
 type SearchFeedback = {
   closer: string[];
@@ -112,6 +124,24 @@ function parseTlds(input: unknown): string[] {
   ).slice(0, 12);
   return cleaned.length ? cleaned : DEFAULT_TLDS;
 }
+function parseStyles(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  return unique(
+    input.map((s) => String(s).toLowerCase().trim()).filter((s) => STYLE_KEYS.includes(s))
+  );
+}
+// Maps a model's free-text style label onto the fixed taxonomy (it may say "coined",
+// "blend", "punny", "corporate"...). null when nothing matches.
+function normalizeStyle(value: string): string | null {
+  const text = value.toLowerCase();
+  if (/invent|coin|made.?up|abstract/.test(text)) return "invented";
+  if (/compound|blend|portmanteau|two.?word/.test(text)) return "compound";
+  if (/playful|pun|fun|quirk|whims/.test(text)) return "playful";
+  if (/professional|serious|corporate|formal|credib/.test(text)) return "professional";
+  if (/real|dictionary|evocative|word/.test(text)) return "real";
+  return null;
+}
+
 function parseFeedback(input: unknown): SearchFeedback {
   const record = input && typeof input === "object" ? input as Record<string, unknown> : {};
   const list = (value: unknown) => Array.isArray(value)
@@ -144,7 +174,7 @@ function suggestedKeywords(context: Omit<NamingContext, "aiKeywords">) {
 
 function buildContext(body: {
   brief?: string; industry?: string; audience?: string;
-  keywords?: string; aiKeywords?: string; avoid?: string; maxLen?: unknown;
+  keywords?: string; aiKeywords?: string; avoid?: string; maxLen?: unknown; styles?: unknown;
 }): NamingContext {
   const partial = {
     brief: body.brief ?? "",
@@ -152,7 +182,8 @@ function buildContext(body: {
     audience: body.audience ?? "",
     keywords: parseWords(body.keywords),
     avoid: parseWords(body.avoid),
-    maxLen: parseMaxLen(body.maxLen)
+    maxLen: parseMaxLen(body.maxLen),
+    styles: parseStyles(body.styles)
   };
   return { ...partial, aiKeywords: unique([...parseWords(body.aiKeywords), ...suggestedKeywords(partial)]) };
 }
@@ -531,7 +562,12 @@ const NAMER_STOP = new Set([
   "following", "request", "restate", "conveys", "convey", "feels", "feel", "memorable",
   "wide", "variety", "format", "formats", "length", "lengths", "suffix", "suffixes", "prefix",
   "prefixes", "vibe", "vibes", "flavor", "tone", "fairly", "rather", "quite", "still", "while",
-  "okay", "maybe", "perhaps", "really", "actual", "actually", "around", "about", "above"
+  "okay", "maybe", "perhaps", "really", "actual", "actually", "around", "about", "above",
+  // Self-correction chatter observed leaking from the reasoning model's final message.
+  "duplicate", "duplicates", "oops", "need", "needs", "redo", "wait", "replace", "replaced",
+  "replacement", "swap", "swapped", "remove", "removed", "drop", "dropped", "recount", "count",
+  "counted", "done", "sorry", "note", "notes", "let", "lets", "revised", "revise", "version",
+  "attempt", "retry", "again", "missing", "extra", "error", "mistake", "correction", "fixed"
 ]);
 
 // Bottomless last-resort namer. generateAiNames can fail and generateCandidates can be
@@ -631,11 +667,14 @@ async function generateAiNames(
     feedback.further.length
       ? `User marked these as further away; avoid names with a similar feel, rhythm, or semantic neighborhood: ${feedback.further.join(", ")}`
       : "",
+    context.styles.length
+      ? `Only generate names in these styles: ${context.styles.map((s) => STYLE_PROMPTS[s]).join("; ")}.`
+      : "",
     avoid.length ? `Avoid these themes/words entirely: ${avoid.join(", ")}` : "",
     exclude.length ? `Do NOT repeat any of these already-shown names: ${exclude.slice(-120).join(", ")}` : "",
     "",
     "Every name must feel tailor-made for the brief — evoke its meaning, audience, or mood. No generic tech filler.",
-    `Each name is ONE token, 4-${maxNameLength} letters, no spaces or punctuation, easy to say, and clearly distinct from the others. Vary the styles widely: invented words, blends, evocative real words, playful coinages. Do not reuse one stem with different endings. Return ONLY the names separated by spaces, nothing else.`
+    `Each name is ONE token, 4-${maxNameLength} letters, no spaces or punctuation, easy to say, and clearly distinct from the others. ${context.styles.length ? "Stay strictly within the requested styles." : "Vary the styles widely: invented words, blends, evocative real words, playful coinages."} Do not reuse one stem with different endings. Return ONLY the names separated by spaces, nothing else.`
   ].filter(Boolean);
 
   const system = "You are an expert startup and product namer who produces diverse, memorable, brandable names.";
@@ -696,7 +735,7 @@ async function handleSuggest(request: Request, env: Env) {
   const body = (await request.json().catch(() => ({}))) as {
     brief?: string; industry?: string; audience?: string; keywords?: string;
     aiKeywords?: string; avoid?: string; seeds?: string; count?: number; offset?: number;
-    tlds?: unknown; exclude?: unknown; maxLen?: unknown; feedback?: unknown;
+    tlds?: unknown; exclude?: unknown; maxLen?: unknown; feedback?: unknown; styles?: unknown;
   };
 
   const context = buildContext(body);
@@ -756,7 +795,7 @@ async function handleNames(request: Request, env: Env) {
   const body = (await request.json().catch(() => ({}))) as {
     brief?: string; industry?: string; audience?: string; keywords?: string;
     aiKeywords?: string; avoid?: string; seeds?: string; count?: number; exclude?: unknown;
-    maxLen?: unknown; feedback?: unknown;
+    maxLen?: unknown; feedback?: unknown; styles?: unknown;
   };
   const context = buildContext(body);
   const count = clampInt(body.count, 8, 96, 72);
@@ -782,7 +821,7 @@ async function handleNames(request: Request, env: Env) {
 // plus a 0-100 brief-fit rating that handleEnrich blends into the card score — so the
 // score ring reflects relevance to the brief, not just availability mechanics. One batched
 // model call; on any failure each card just falls back to no subtitle and the base score.
-type NameInsight = { tagline: string; fit: number | null };
+type NameInsight = { tagline: string; fit: number | null; style: string | null };
 
 async function generateInsights(names: string[], context: NamingContext, env: Env): Promise<Map<string, NameInsight>> {
   const map = new Map<string, NameInsight>();
@@ -792,7 +831,7 @@ async function generateInsights(names: string[], context: NamingContext, env: En
     `Brief: ${focus}`,
     context.keywords.length ? `Keywords: ${context.keywords.join(", ")}` : "",
     "",
-    'For each product name below: write a punchy 3-7 word rationale tying it to the brief (its vibe or meaning, not a full sentence), then rate 0-100 how well the name fits the brief — meaning, sound, and audience; be honest, spread the ratings. Output exactly one line per name in the form "Name | rationale | NN", nothing else.',
+    'For each product name below: write a punchy 3-7 word rationale tying it to the brief (its vibe or meaning, not a full sentence), then rate 0-100 how well the name fits the brief — meaning, sound, and audience; be honest, spread the ratings. Then classify the name\'s style as exactly one of: invented, real, compound, playful, professional. Output exactly one line per name in the form "Name | rationale | NN | style", nothing else.',
     "",
     names.join(", ")
   ].filter(Boolean).join("\n");
@@ -815,12 +854,19 @@ async function generateInsights(names: string[], context: NamingContext, env: En
     if (parts.length < 2) continue;
     const nm = parts[0].replace(/^[\s*\d.)-]+/, "").trim().toLowerCase();
     const tag = parts[1].trim().replace(/^["'-]+/, "").replace(/["']+$/, "");
+    // Trailing segments are a rating and/or a style label, in whatever order survived.
     let fit: number | null = null;
-    if (parts.length >= 3) {
-      const rating = parseInt(parts[parts.length - 1].replace(/[^0-9]/g, ""), 10);
-      if (Number.isFinite(rating) && rating >= 0 && rating <= 100) fit = rating;
+    let style: string | null = null;
+    for (const part of parts.slice(2)) {
+      const trimmed = part.trim();
+      if (/^\d{1,3}$/.test(trimmed)) {
+        const rating = parseInt(trimmed, 10);
+        if (rating <= 100) fit = rating;
+        continue;
+      }
+      style = normalizeStyle(trimmed) ?? style;
     }
-    if (nm && tag && tag.length <= 80) map.set(nm, { tagline: tag, fit });
+    if (nm && tag && tag.length <= 80) map.set(nm, { tagline: tag, fit, style });
   }
   return map;
 }
@@ -877,6 +923,7 @@ async function handleEnrich(request: Request, env: Env) {
       name,
       displayName: insight?.tagline ?? "",
       score,
+      style: insight?.style ?? null,
       appStoreCount,
       github: githubs[index],
       domains
