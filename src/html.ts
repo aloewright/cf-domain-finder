@@ -202,6 +202,8 @@ export const INDEX_HTML = `<!doctype html>
     .card-foot .foot-sep { color: var(--line); }
     .card-foot a.tm-link { color: var(--muted); display: inline-flex; align-items: center; gap: 4px; text-decoration: none; font-weight: 800; }
     .card-foot a.tm-link:hover { color: var(--text); }
+    .check-btn { background: none; border: none; padding: 0; color: var(--muted); font: inherit; font-size: 13px; font-weight: 800; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+    .check-btn:hover { color: var(--text); }
     .aud-panel { border-top: 1px solid var(--line); margin-top: 2px; padding-top: 14px; display: grid; gap: 10px; }
     .aud-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 800; color: var(--text); }
     .aud-head i, .aud-head svg { width: 15px; height: 15px; color: var(--muted); }
@@ -840,6 +842,33 @@ export const INDEX_HTML = `<!doctype html>
         refillPool().then(loadMore);
       }
     }
+    // App Store collisions are checked on demand — one click, one iTunes call — instead of
+    // fanning out a call per card on every page load.
+    function appStoreSegment(item) {
+      if (typeof item.appStoreCount === 'number') return '<i data-lucide="smartphone"></i> App Store: <b>' + item.appStoreCount + '</b>';
+      if (item.appChecking) return '<i data-lucide="smartphone"></i> App Store: <b>&hellip;</b>';
+      if (item.appChecked) return '<i data-lucide="smartphone"></i> App Store: <b>&mdash;</b>';
+      return '<button class="check-btn" data-name="' + esc(item.name) + '" onclick="checkAppStoreFor(this)" title="Check App Store for name collisions"><i data-lucide="smartphone"></i> Check App Store</button>';
+    }
+    async function checkAppStoreFor(btn) {
+      var name = btn.dataset.name || '';
+      var item = null;
+      allResults.forEach(function(r){ if (r.name === name) item = r; });
+      if (!item || item.appChecking) return;
+      item.appChecking = true;
+      reRender();
+      try {
+        var res = await fetch('/api/appstore', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name }) });
+        if (res.status === 401) { item.appChecking = false; reRender(); showAuth(function(){}); return; }
+        var data = await res.json();
+        item.appStoreCount = (typeof data.resultCount === 'number') ? data.resultCount : null;
+      } catch (e) {
+        item.appStoreCount = null;
+      }
+      item.appChecking = false;
+      item.appChecked = true;
+      reRender();
+    }
     async function testAudience(btn) {
       var name = btn.dataset.name || '';
       var item = null;
@@ -926,7 +955,7 @@ export const INDEX_HTML = `<!doctype html>
         '<div class="card-foot">' +
         '<button class="say-btn" data-name="' + esc(item.name) + '" onclick="sayName(this.dataset.name)" title="Hear it spoken" aria-label="Pronounce ' + esc(item.name) + '"><i data-lucide="volume-2"></i></button>' +
         sylCount(item.name) + ' syl' +
-        '<span class="foot-sep">&middot;</span><i data-lucide="smartphone"></i> App Store: <b>' + (item.appStoreCount == null ? '&mdash;' : item.appStoreCount) + '</b>' + gh +
+        '<span class="foot-sep">&middot;</span>' + appStoreSegment(item) + gh +
         '<span class="foot-sep">&middot;</span><a class="tm-link" href="' + tmHref + '" target="_blank" rel="noopener noreferrer" title="Screen for trademark conflicts">TM <i data-lucide="external-link"></i></a>' +
         '</div></div>';
     }

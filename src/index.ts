@@ -768,13 +768,11 @@ async function handleSuggest(request: Request, env: Env) {
   }
   page = ensureNames(page, context, exclude, Math.min(12, count));
 
-  const [appStores, domainMap] = await Promise.all([
-    Promise.all(page.map((name) => checkAppStore(name))),
-    checkDomains(page, tlds, env)
-  ]);
+  const domainMap = await checkDomains(page, tlds, env);
 
   const results = page.map((name, index) => {
-    const appStoreCount = appStores[index].resultCount;
+    // iTunes checks are user-initiated via /api/appstore, not fanned out per page.
+    const appStoreCount: number | null = null;
     const domains = domainMap.get(name.toLowerCase()) ?? [];
     return {
       name,
@@ -915,17 +913,14 @@ async function handleEnrich(request: Request, env: Env) {
     : [];
   if (names.length === 0) return json({ results: [] });
 
-  // Lite mode: the client's auto-deepen can chain several pages in seconds; skipping the
-  // per-name iTunes and GitHub fan-out there avoids hammering rate-limited third parties
-  // (which would corrupt scores — see cardScore's null handling) while keeping the parts
-  // deepening actually needs: domain availability, taglines, fit.
+  // App Store counts are NOT fanned out here: Apple throttles the Worker's shared egress
+  // IPs, so background per-name calls bought mostly nulls. The check is user-initiated per
+  // card via POST /api/appstore instead. Lite mode (deepen rounds chaining several pages)
+  // additionally skips the GitHub fan-out.
   const lite = body.lite === true;
   const context = buildContext(body);
   const tlds = parseTlds(body.tlds);
-  const [appCounts, domainMap, insights, githubs] = await Promise.all([
-    lite
-      ? Promise.resolve(names.map(() => null as number | null))
-      : Promise.all(names.map(async (name) => (await checkAppStore(name)).resultCount)),
+  const [domainMap, insights, githubs] = await Promise.all([
     checkDomains(names, tlds, env),
     generateInsights(names, context, env),
     lite
@@ -934,7 +929,7 @@ async function handleEnrich(request: Request, env: Env) {
   ]);
 
   const results = names.map((name, index) => {
-    const appStoreCount = appCounts[index];
+    const appStoreCount: number | null = null;
     const domains = domainMap.get(name.toLowerCase()) ?? [];
     const insight = insights.get(name.toLowerCase());
     const base = cardScore(name, appStoreCount, domains, context);
@@ -954,6 +949,18 @@ async function handleEnrich(request: Request, env: Env) {
   // Best-first within the batch so the strongest names lead each page.
   results.sort((a, b) => b.score - a.score);
   return json({ results });
+}
+
+// POST /api/appstore — on-demand App Store collision count for one name. User-initiated
+// (a button per card) rather than fanned out per enrich page: one click, one iTunes call.
+async function handleAppStoreCheck(request: Request, env: Env) {
+  const userId = await requireUser(request, env);
+  if (!userId) return json({ error: "Authentication required" }, { status: 401 });
+  const body = (await request.json().catch(() => ({}))) as { name?: string };
+  const name = brandCase(String(body.name ?? "")).slice(0, 30);
+  if (!name) return json({ error: "Missing name" }, { status: 400 });
+  const result = await checkAppStore(name);
+  return json({ name, resultCount: result.resultCount });
 }
 
 // POST /api/audience — simulated target-customer reactions to one name (drill-down).
@@ -1270,6 +1277,7 @@ export default {
     if (m === "POST" && pathname === "/api/chat") return handleChat(request, env, ctx);
     if (m === "POST" && pathname === "/api/associate") return handleAssociate(request, env);
     if (m === "POST" && pathname === "/api/audience") return handleAudience(request, env);
+    if (m === "POST" && pathname === "/api/appstore") return handleAppStoreCheck(request, env);
     if (m === "POST" && pathname === "/api/names") return handleNames(request, env);
     if (m === "POST" && pathname === "/api/enrich") return handleEnrich(request, env);
     if (m === "POST" && pathname === "/api/hacks/check") return handleHacksCheck(request, env);
