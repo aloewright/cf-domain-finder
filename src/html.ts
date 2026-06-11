@@ -497,6 +497,7 @@ export const INDEX_HTML = `<!doctype html>
     var state = { count: 24, poolCount: 72, hasMore: true, loading: false, active: false, params: null, maxLen: 99 };
     var sessionFeedback = { closer: [], further: [] };
     var lengthTimer = null;
+    var deepenRounds = 0;
     var hacks = { prefix: false, suffix: false, plural: false, tldhack: false };
     var hackResults = [];
     var HACK_PREFIXES = ['get','try','go','my','the','new'];
@@ -694,13 +695,14 @@ export const INDEX_HTML = `<!doctype html>
       if (state.active) generateNames();
     }
     function getSelectedTlds() { var out = TLDS.filter(function(t){ return selectedTlds[t]; }); return out.length ? out : ['com']; }
-    function toggleHideTaken() { document.getElementById('hide-taken-switch').classList.toggle('on'); reRender(); }
+    function toggleHideTaken() { document.getElementById('hide-taken-switch').classList.toggle('on'); deepenRounds = 0; reRender(); }
     function hideTakenOn() { return document.getElementById('hide-taken-switch').classList.contains('on'); }
     function onLengthChange(skipRegenerate) {
       var v = parseInt(document.getElementById('length-range').value, 10);
       state.maxLen = v >= 20 ? 99 : v;
       var lbl = document.getElementById('length-val');
       if (lbl) lbl.textContent = v >= 20 ? 'Any' : ('≤ ' + v);
+      deepenRounds = 0;
       reRender(); renderHacks();
       if (state.active && !skipRegenerate) {
         clearTimeout(lengthTimer);
@@ -768,6 +770,7 @@ export const INDEX_HTML = `<!doctype html>
       setFeedbackList('further', name, false);
       if (!already) setFeedbackList(kind, name, true);
       allResults.forEach(function(item){ if (item.name === name) item.userFeedback = already ? '' : kind; });
+      deepenRounds = 0;
       reRender();
       state.hasMore = true;
       poolExhausted = false;
@@ -831,8 +834,23 @@ export const INDEX_HTML = `<!doctype html>
       var grid = document.getElementById('results-grid');
       var visible = allResults.filter(isVisible).sort(function(a, b){ return fitRank(b) - fitRank(a); });
       if (visible.length === 0 && allResults.length > 0) {
-        grid.innerHTML = '<div class="empty-state">No available matches in this batch yet. Looking deeper…</div>';
-        if (state.active && state.hasMore && !state.loading) setTimeout(loadMore, 80);
+        // First try digging deeper into the pool; after a few fruitless rounds (or when
+        // the pool is spent) never leave the grid empty — show the closest names instead.
+        if (state.active && state.hasMore && deepenRounds < 5) {
+          grid.innerHTML = '<div class="empty-state">No available matches in this batch yet. Looking deeper…</div>';
+          if (!state.loading) { deepenRounds++; setTimeout(loadMore, 80); }
+          return;
+        }
+        visible = allResults.slice().sort(function(a, b){ return fitRank(b) - fitRank(a); }).slice(0, 12);
+        grid.innerHTML = '<div class="empty-state">No exact matches for your filters — showing the closest names instead.</div>' +
+          visible.map(cardHtml).join('');
+        lucide.createIcons();
+        return;
+      }
+      if (visible.length > 0) deepenRounds = 0;
+      if (visible.length === 0 && state.active && !state.hasMore) {
+        // Nothing arrived at all (network/API failure) — say so rather than an empty grid.
+        grid.innerHTML = '<div class="empty-state">Nothing came back for this brief — please try Regenerate.</div>';
         return;
       }
       grid.innerHTML = visible.map(cardHtml).join('');
@@ -849,6 +867,7 @@ export const INDEX_HTML = `<!doctype html>
     }
     function toggleHidePremium() {
       document.getElementById('hide-premium-switch').classList.toggle('on');
+      deepenRounds = 0;
       reRender();
       renderHacks();
     }
@@ -994,7 +1013,7 @@ export const INDEX_HTML = `<!doctype html>
       if (btn) { btn.disabled = true; btn.innerHTML = 'Generating... <i data-lucide="loader-2"></i>'; lucide.createIcons(); }
       document.querySelectorAll('.wizard-step').forEach(function(s){ s.classList.remove('active'); });
       document.getElementById('dashboard').classList.add('active');
-      allResults = []; namePool = []; poolExhausted = false; refilling = false;
+      allResults = []; namePool = []; poolExhausted = false; refilling = false; deepenRounds = 0;
       resetHacks();
       document.getElementById('results-grid').innerHTML = '';
       state.hasMore = true; state.loading = false; state.active = true;
@@ -1018,6 +1037,9 @@ export const INDEX_HTML = `<!doctype html>
         if (batch.length === 0) {
           state.hasMore = false;
           status.textContent = "That's all for this brief — try Regenerate or new seeds.";
+          // The grid may be showing the "looking deeper" empty state; with the pool dry,
+          // re-render so it falls back to the closest names rather than staying empty.
+          reRender();
           return;
         }
         var p = state.params || getParams();

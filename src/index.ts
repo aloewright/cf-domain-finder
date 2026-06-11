@@ -534,6 +534,61 @@ const NAMER_STOP = new Set([
   "okay", "maybe", "perhaps", "really", "actual", "actually", "around", "about", "above"
 ]);
 
+// Bottomless last-resort namer. generateAiNames can fail and generateCandidates can be
+// filtered to nothing (tight maxLen, long exclude, aggressive avoid list); this cannot:
+// brief-word blends first, then a deterministic walk over a ~400k-deep consonant-vowel
+// syllable space (strided so consecutive picks don't rhyme). Guarantees the API never
+// returns an empty list.
+const SYNTH_ONSETS = ["b", "br", "c", "cl", "d", "dr", "f", "fl", "g", "gl", "h", "j", "k", "l", "m", "n", "p", "pl", "r", "s", "sl", "st", "t", "tr", "v", "w", "z"];
+const SYNTH_VOWELS = ["a", "e", "i", "o", "u", "ai", "ea", "io"];
+const SYNTH_ENDS = ["", "n", "r", "l", "s", "x", "th", "sh"];
+
+function synthNames(context: NamingContext, exclude: string[], count: number): string[] {
+  const maxLen = Math.max(4, context.maxLen ?? 12);
+  const seen = new Set(exclude.map((n) => n.toLowerCase()));
+  const avoidTerms = context.avoid.map(normalize);
+  const out: string[] = [];
+  const push = (raw: string) => {
+    const name = brandCase(raw);
+    if (!name || name.length < 4 || name.length > maxLen) return false;
+    const lower = name.toLowerCase();
+    if (seen.has(lower)) return false;
+    if (avoidTerms.some((term) => term && lower.includes(term))) return false;
+    seen.add(lower);
+    out.push(name);
+    return out.length >= count;
+  };
+
+  // Brief-word blends first so even the synthesizer leans toward the request.
+  const blendSuffixes = ["ly", "io", "ora", "ix", "ave", "una", "esa"];
+  for (const word of contextWords(context).slice(0, 12)) {
+    for (const suffix of blendSuffixes) {
+      if (push(word + suffix)) return out;
+    }
+  }
+
+  const sizes = [SYNTH_VOWELS.length, SYNTH_ONSETS.length, SYNTH_VOWELS.length, SYNTH_ENDS.length];
+  const total = SYNTH_ONSETS.length * sizes[0] * sizes[1] * sizes[2] * sizes[3];
+  const stride = 104729; // prime, coprime with total — visits every combo exactly once
+  for (let i = 0; i < total && out.length < count; i++) {
+    let k = (i * stride) % total;
+    const end = SYNTH_ENDS[k % SYNTH_ENDS.length]; k = Math.floor(k / SYNTH_ENDS.length);
+    const v2 = SYNTH_VOWELS[k % SYNTH_VOWELS.length]; k = Math.floor(k / SYNTH_VOWELS.length);
+    const o2 = SYNTH_ONSETS[k % SYNTH_ONSETS.length]; k = Math.floor(k / SYNTH_ONSETS.length);
+    const v1 = SYNTH_VOWELS[k % SYNTH_VOWELS.length]; k = Math.floor(k / SYNTH_VOWELS.length);
+    const o1 = SYNTH_ONSETS[k % SYNTH_ONSETS.length];
+    push(o1 + v1 + o2 + v2 + end);
+  }
+  return out;
+}
+
+// Top up below `floor` with synthesized names — but no further, so a healthy AI batch
+// isn't diluted with generic filler.
+function ensureNames(names: string[], context: NamingContext, exclude: string[], floor: number): string[] {
+  if (names.length >= floor) return names;
+  return [...names, ...synthNames(context, [...exclude, ...names], floor - names.length)];
+}
+
 // Near-duplicate guard: two names are "the same idea" when one contains the other (a stem
 // with a suffix bolted on) or they share a long common prefix. Keeps a batch from burning
 // five slots on minor twists of one stem.
@@ -653,7 +708,8 @@ async function handleSuggest(request: Request, env: Env) {
     ? body.exclude.map((n) => String(n)).filter(Boolean).slice(0, 120)
     : [];
 
-  // Primary: AI-generated diverse names. Fallback: deterministic combos (exclude-aware).
+  // Primary: AI-generated diverse names. Fallback: deterministic combos (exclude-aware),
+  // then synthesized names — never an empty page.
   let page = await generateAiNames(context, body.seeds, exclude, count, feedback, env);
   if (page.length === 0) {
     const seen = new Set(exclude.map((n) => n.toLowerCase()));
@@ -661,6 +717,7 @@ async function handleSuggest(request: Request, env: Env) {
       .filter((n) => !seen.has(n.toLowerCase()))
       .slice(0, count);
   }
+  page = ensureNames(page, context, exclude, Math.min(12, count));
 
   const [appStores, domainMap] = await Promise.all([
     Promise.all(page.map((name) => checkAppStore(name))),
@@ -715,6 +772,9 @@ async function handleNames(request: Request, env: Env) {
       .filter((n) => !seen.has(n.toLowerCase()))
       .slice(0, count);
   }
+  // Floor, not fill: a thin AI batch gets topped up to a usable page, a healthy one
+  // is left alone. The synthesizer is bottomless, so this can't come back empty.
+  names = ensureNames(names, context, exclude, Math.min(12, count));
   return json({ names });
 }
 
