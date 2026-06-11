@@ -202,6 +202,20 @@ export const INDEX_HTML = `<!doctype html>
     .card-foot .foot-sep { color: var(--line); }
     .card-foot a.tm-link { color: var(--muted); display: inline-flex; align-items: center; gap: 4px; text-decoration: none; font-weight: 800; }
     .card-foot a.tm-link:hover { color: var(--text); }
+    .aud-panel { border-top: 1px solid var(--line); margin-top: 2px; padding-top: 14px; display: grid; gap: 10px; }
+    .aud-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 800; color: var(--text); }
+    .aud-head i, .aud-head svg { width: 15px; height: 15px; color: var(--muted); }
+    .aud-head b { color: var(--accent); }
+    .aud-quote { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: rgba(255,255,255,0.03); display: grid; gap: 5px; }
+    .aud-who { font-size: 12px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .aud-text { font-size: 13.5px; color: var(--text); line-height: 1.45; }
+    .aud-reads { font-size: 12.5px; color: var(--muted); }
+    .aud-bar { height: 4px; border-radius: var(--r-pill); background: var(--line); overflow: hidden; }
+    .aud-bar span { display: block; height: 100%; border-radius: var(--r-pill); background: linear-gradient(to right, var(--accent), var(--accent-2)); }
+    .aud-notes { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+    .aud-notes b { color: var(--text); }
+    .aud-skel { height: 56px; border-radius: 12px; background: rgba(255,255,255,0.05); animation: audPulse 1.2s ease-in-out infinite; }
+    @keyframes audPulse { 50% { opacity: 0.4; } }
 
     .scroll-status { text-align: center; color: var(--muted); padding: 32px 0 8px; font-weight: 600; grid-column: 1 / -1; }
     .spinner { width: 22px; height: 22px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: var(--r-pill); display: inline-block; animation: spin 0.8s linear infinite; vertical-align: middle; }
@@ -299,9 +313,9 @@ export const INDEX_HTML = `<!doctype html>
         <svg class="app-icon" xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" role="img" aria-label="copythe.link">
           <defs>
             <linearGradient id="ctl-bg" x1="12" y1="10" x2="108" y2="112" gradientUnits="userSpaceOnUse">
-              <stop offset="0" stop-color="#fff7c7"/>
-              <stop offset="0.46" stop-color="#ffb15f"/>
-              <stop offset="1" stop-color="#36d8c7"/>
+              <stop offset="0" stop-color="#d6f6f9"/>
+              <stop offset="0.46" stop-color="#8be8ee"/>
+              <stop offset="1" stop-color="#bda7ff"/>
             </linearGradient>
             <linearGradient id="ctl-sheen" x1="18" y1="16" x2="96" y2="92" gradientUnits="userSpaceOnUse">
               <stop offset="0" stop-color="#ffffff" stop-opacity="0.78"/>
@@ -309,25 +323,25 @@ export const INDEX_HTML = `<!doctype html>
               <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
             </linearGradient>
             <filter id="ctl-shadow" x="-20%" y="-20%" width="140%" height="140%">
-              <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#25120a" flood-opacity="0.35"/>
+              <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#07090c" flood-opacity="0.4"/>
             </filter>
           </defs>
-          <rect width="120" height="120" rx="28" fill="#101114"/>
+          <rect width="120" height="120" rx="28" fill="#0d0e10"/>
           <rect x="6" y="6" width="108" height="108" rx="24" fill="url(#ctl-bg)" filter="url(#ctl-shadow)"/>
           <path d="M18 20c20 5 43 3 84-4v74c-18 8-44 14-84 12z" fill="url(#ctl-sheen)"/>
           <g transform="rotate(-28 60 60)" fill="none" stroke-linecap="round" stroke-linejoin="round">
-            <g stroke="#fff8df" stroke-opacity="0.3" stroke-width="17">
+            <g stroke="#f4f1ec" stroke-opacity="0.32" stroke-width="17">
               <path d="M45 72H33a17 17 0 0 1 0-34h24a17 17 0 0 1 13 6"/>
               <path d="M75 48h12a17 17 0 0 1 0 34H63a17 17 0 0 1-13-6"/>
               <path d="M45 60h30"/>
             </g>
-            <g stroke="#181a1f" stroke-width="10">
+            <g stroke="#10131a" stroke-width="10">
               <path d="M45 72H33a17 17 0 0 1 0-34h24a17 17 0 0 1 13 6"/>
               <path d="M75 48h12a17 17 0 0 1 0 34H63a17 17 0 0 1-13-6"/>
               <path d="M45 60h30"/>
             </g>
           </g>
-          <rect x="6.75" y="6.75" width="106.5" height="106.5" rx="23.25" fill="none" stroke="#fff8df" stroke-opacity="0.78" stroke-width="1.5"/>
+          <rect x="6.75" y="6.75" width="106.5" height="106.5" rx="23.25" fill="none" stroke="#f4f1ec" stroke-opacity="0.7" stroke-width="1.5"/>
         </svg>
       </div>
       <div id="header-actions"></div>
@@ -826,6 +840,27 @@ export const INDEX_HTML = `<!doctype html>
         refillPool().then(loadMore);
       }
     }
+    async function testAudience(btn) {
+      var name = btn.dataset.name || '';
+      var item = null;
+      allResults.forEach(function(r){ if (r.name === name) item = r; });
+      if (!item || item.audLoading) return;
+      if (item.audience) { item.audOpen = !item.audOpen; reRender(); return; }
+      item.audLoading = true;
+      reRender();
+      try {
+        var p = state.params || getParams();
+        var res = await fetch('/api/audience', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name, brief: p.brief, industry: p.industry }) });
+        if (res.status === 401) { item.audLoading = false; reRender(); showAuth(function(){}); return; }
+        var data = await res.json();
+        item.audLoading = false;
+        if (data && data.personas && data.personas.length) { item.audience = data; item.audOpen = true; }
+        else { item.audOpen = false; }
+      } catch (e) {
+        item.audLoading = false;
+      }
+      reRender();
+    }
     function isVisible(item) {
       if (!item._hack && item.name.length > state.maxLen) return false;
       // Style filter: unknown-style items pass (hacks, synth fallback) so the filter can
@@ -859,7 +894,24 @@ export const INDEX_HTML = `<!doctype html>
       var fb = feedbackFor(item.name);
       var feedback = '<div class="feedback-actions"><span>Tune</span>' +
         '<button class="fb-btn ' + (fb === 'closer' ? 'on' : '') + '" data-name="' + esc(item.name) + '" data-feedback="closer" onclick="rateName(this)" title="Closer to what I want" aria-label="Mark ' + esc(item.name) + ' closer"><i data-lucide="thumbs-up"></i></button>' +
-        '<button class="fb-btn ' + (fb === 'further' ? 'on' : '') + '" data-name="' + esc(item.name) + '" data-feedback="further" onclick="rateName(this)" title="Further from what I want" aria-label="Mark ' + esc(item.name) + ' further"><i data-lucide="thumbs-down"></i></button></div>';
+        '<button class="fb-btn ' + (fb === 'further' ? 'on' : '') + '" data-name="' + esc(item.name) + '" data-feedback="further" onclick="rateName(this)" title="Further from what I want" aria-label="Mark ' + esc(item.name) + ' further"><i data-lucide="thumbs-down"></i></button>' +
+        '<button class="fb-btn ' + (item.audOpen ? 'on' : '') + '" data-name="' + esc(item.name) + '" onclick="testAudience(this)" title="Test with your target audience" aria-label="Audience-test ' + esc(item.name) + '"><i data-lucide="users"></i></button></div>';
+      var aud = '';
+      if (item.audLoading) {
+        aud = '<div class="aud-panel"><div class="aud-head"><i data-lucide="users"></i> Testing with your audience…</div><div class="aud-skel"></div><div class="aud-skel"></div></div>';
+      } else if (item.audience && item.audOpen) {
+        var a = item.audience;
+        aud = '<div class="aud-panel"><div class="aud-head"><i data-lucide="users"></i> Audience resonance: <b>' + (a.resonance || 0) + '</b>/100</div>' +
+          (a.personas || []).map(function(p){
+            return '<div class="aud-quote"><div class="aud-who">' + esc(p.persona) + '</div>' +
+              '<div class="aud-text">&ldquo;' + esc(p.quote) + '&rdquo;</div>' +
+              (p.readsAs ? '<div class="aud-reads">Reads as: ' + esc(p.readsAs) + '</div>' : '') +
+              '<div class="aud-bar"><span style="width:' + (parseInt(p.trust, 10) || 0) + '%"></span></div></div>';
+          }).join('') +
+          ((a.positives || []).length ? '<div class="aud-notes"><b>Works:</b> ' + a.positives.map(esc).join(' &middot; ') + '</div>' : '') +
+          ((a.concerns || []).length ? '<div class="aud-notes"><b>Concerns:</b> ' + a.concerns.map(esc).join(' &middot; ') + '</div>' : '') +
+          '</div>';
+      }
       var gh = '';
       if (item.github === true) gh = '<span class="foot-sep">&middot;</span><i data-lucide="at-sign"></i> GitHub: <b>free</b>';
       else if (item.github === false) gh = '<span class="foot-sep">&middot;</span><i data-lucide="at-sign"></i> GitHub: taken';
@@ -870,6 +922,7 @@ export const INDEX_HTML = `<!doctype html>
         meta +
         '<div class="domain-list">' + rows + '</div>' +
         feedback +
+        aud +
         '<div class="card-foot">' +
         '<button class="say-btn" data-name="' + esc(item.name) + '" onclick="sayName(this.dataset.name)" title="Hear it spoken" aria-label="Pronounce ' + esc(item.name) + '"><i data-lucide="volume-2"></i></button>' +
         sylCount(item.name) + ' syl' +

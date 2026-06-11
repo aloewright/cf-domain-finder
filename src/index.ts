@@ -934,6 +934,82 @@ async function handleEnrich(request: Request, env: Env) {
   return json({ results });
 }
 
+// POST /api/audience — simulated target-customer reactions to one name (drill-down).
+// One quality-first model call: personas derive from the brief, with a forced skeptic and
+// spread-the-scores instructions to counter LLM flattery. The AI Gateway caches on request
+// body, so re-testing the same name+brief is free.
+async function handleAudience(request: Request, env: Env) {
+  const userId = await requireUser(request, env);
+  if (!userId) return json({ error: "Authentication required" }, { status: 401 });
+
+  const body = (await request.json().catch(() => ({}))) as {
+    name?: string; brief?: string; industry?: string;
+  };
+  const name = brandCase(String(body.name ?? "")).slice(0, 30);
+  if (!name) return json({ error: "Missing name" }, { status: 400 });
+  const brief = String(body.brief ?? "").slice(0, 500);
+  const industry = String(body.industry ?? "").slice(0, 200);
+
+  const prompt = [
+    `Product brief: ${brief || industry || "a modern software product"}`,
+    industry ? `Industry: ${industry}` : "",
+    "",
+    `Simulate audience testing for the product name "${name}".`,
+    "Invent 4 distinct people from this product's target audience. At least one must be a skeptic who is hard to impress.",
+    "For each person, react to the name honestly IN THEIR VOICE:",
+    '- "persona": who they are, 4-8 words',
+    '- "quote": their gut reaction to the name, 8-20 words, first person',
+    '- "readsAs": what they would guess the product is from the name alone, 3-8 words',
+    '- "trust": 0-100, how much the name makes them trust and want the product. Spread the numbers honestly; a weak or confusing name must score low.',
+    "Then add:",
+    '- "resonance": 0-100 overall fit of the name to this audience',
+    '- "positives": 1-3 short phrases',
+    '- "concerns": 1-3 short phrases (always include at least one)',
+    "",
+    'Return ONLY JSON, nothing else: {"personas":[{"persona":"","quote":"","readsAs":"","trust":0}],"resonance":0,"positives":[],"concerns":[]}'
+  ].filter(Boolean).join("\n");
+
+  const system = "You run brutally honest brand-name audience panels. You never flatter a weak name.";
+  try {
+    let text = "";
+    try {
+      text = await namerText(env, system, prompt, 20000);
+    } catch {
+      text = "";
+    }
+    if (!text.trim()) {
+      text = await gatewayText(env, system, prompt, { timeoutMs: 13000, maxOutputTokens: 700 });
+    }
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    const parsed = JSON.parse(start >= 0 && end > start ? text.slice(start, end + 1) : text) as {
+      personas?: Array<{ persona?: unknown; quote?: unknown; readsAs?: unknown; trust?: unknown }>;
+      resonance?: unknown; positives?: unknown; concerns?: unknown;
+    };
+    const personas = (Array.isArray(parsed.personas) ? parsed.personas : [])
+      .slice(0, 5)
+      .map((p) => ({
+        persona: String(p?.persona ?? "").slice(0, 80),
+        quote: String(p?.quote ?? "").slice(0, 220),
+        readsAs: String(p?.readsAs ?? "").slice(0, 90),
+        trust: clampInt(Number(p?.trust), 0, 100, 50)
+      }))
+      .filter((p) => p.persona && p.quote);
+    if (personas.length === 0) return json({ error: "Audience testing unavailable right now" }, { status: 502 });
+    const phrases = (value: unknown) =>
+      (Array.isArray(value) ? value : []).slice(0, 3).map((s) => String(s).slice(0, 90)).filter(Boolean);
+    return json({
+      name,
+      personas,
+      resonance: clampInt(Number(parsed.resonance), 0, 100, 50),
+      positives: phrases(parsed.positives),
+      concerns: phrases(parsed.concerns)
+    });
+  } catch {
+    return json({ error: "Audience testing unavailable right now" }, { status: 502 });
+  }
+}
+
 const ASSOCIATE_STOP = new Set([
   "the", "and", "for", "you", "are", "with", "that", "this", "into", "from", "your", "word",
   "words", "here", "list", "name", "tech", "they", "them", "like", "such", "etc", "some", "more",
@@ -1171,6 +1247,7 @@ export default {
     if (m === "DELETE" && pathname === "/api/bookmarks") return handleDeleteBookmark(request, env);
     if (m === "POST" && pathname === "/api/chat") return handleChat(request, env, ctx);
     if (m === "POST" && pathname === "/api/associate") return handleAssociate(request, env);
+    if (m === "POST" && pathname === "/api/audience") return handleAudience(request, env);
     if (m === "POST" && pathname === "/api/names") return handleNames(request, env);
     if (m === "POST" && pathname === "/api/enrich") return handleEnrich(request, env);
     if (m === "POST" && pathname === "/api/hacks/check") return handleHacksCheck(request, env);
